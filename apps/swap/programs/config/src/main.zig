@@ -1,0 +1,225 @@
+//! The swap app's program `config` (Open Exchange, shruggr/open-exchange#1; skein-amm's amm-config
+//! 0.22.0 moved here and CHANGED, shruggr/skein#164): root's decisions recorded as facts under the
+//! app's own heads and emitted as events the Open Exchange host reacts to. Nothing is asked of
+//! anyone and nothing answers back: no instance manager, no creating/failed states. The decisions
+//! are tokens.zig's and discovery.zig's; this file wires them to the VM.
+//!
+//! **Stepped** (mailbox routes):
+//!
+//!   box `amm/admin` (kernel.beef; the role root gates the four fns):
+//!     {fn: "enable", args: {tokenId, beef?}}   the BEEF (the door checked it and handed the
+//!                       envelope; the wire read back, chain.record.wireOf) must be the token id's
+//!                       deploy (tokens.zig `deployOf`); `beef` may be left out for a token already
+//!                       on the list (its kept `deploy`). The row `enabled` (since now, the BEEF kept
+//!                       as `deploy`) and the event `{event: "token-enabled", tokenId, beef, terms?,
+//!                       market?}` (the defaults at this step). An enabled token enabled again: the
+//!                       same fact again (the host's reaction is idempotent).
+//!     {fn: "disable", args: {tokenId}}   a token on the list: the row `disabled`, the event
+//!                       `{event: "token-disabled", tokenId}`.
+//!     {fn: "defaults", args: {terms?, market?}}   the head `amm/defaults` (tokens.zig `withDefaults`).
+//!     {fn: "discovery", args: {on}}   the head `amm/discovery` `{on, since}` and the event
+//!                       `discovery-on` / `discovery-off` (discovery.zig).
+//!     Each answered to the sender in that box: `{fn, request, replyTo, result | error}`. A body
+//!     that is itself an answer (`request` / `replyTo` in it: this program's answer looped back
+//!     when root's key is the instance's own, a one-key host) is not a request: nothing runs.
+//!
+//! **Called** (read routes; their filters: anyone, nothing logged):
+//!
+//!   tokens    `/tokens`: the enable list, newest first (tokens.zig `tokensJson`)
+//!   defaults  `/defaults`: the defaults, `{terms?, market?}` (tokens.zig `defaultsJson`)
+//!   discovery `/discovery`: `{on, since}`, or `{on: false}` (discovery.zig `json`)
+//!   serve     `/` (prefix): the Swap pages, www/ of the app's own tree (skein-sdk `files.serve`)
+const std = @import("std");
+const w = @import("chain");
+const vm = @import("overlay_sk");
+const tokens = @import("tokens.zig");
+const discovery = @import("discovery.zig");
+const app = @import("app");
+const files = @import("files");
+const scbor = @import("sdk_cbor");
+
+const cbor = w.cbor;
+const Value = cbor.Value;
+const Allocator = std.mem.Allocator;
+const eql = std.mem.eql;
+
+pub const app_name = "amm";
+const app_head = "amm/app";
+
+pub fn main() u8 {
+    return vm.main("config", run);
+}
+
+fn run(a: Allocator) anyerror!void {
+    const in = try vm.input(a);
+    if (eql(u8, in.getText("kind") orelse "", "call")) return call(a, in);
+    return step(a, in);
+}
+
+// ---------------------------------------------------------------- reads
+
+fn isFilter(in: Value) bool {
+    const f = in.get("filter") orelse return false;
+    return f == .boolean and f.boolean;
+}
+
+fn asFilterAnswer(a: Allocator, http: Value) !Value {
+    return .{ .map = try a.dupe(cbor.Entry, &.{.{ .key = "answer", .value = http }}) };
+}
+
+fn httpJson(a: Allocator, status: u16, body: []const u8) !Value {
+    return .{ .map = try a.dupe(cbor.Entry, &.{
+        .{ .key = "status", .value = .{ .uint = status } },
+        .{ .key = "type", .value = .{ .text = "application/json" } },
+        .{ .key = "body", .value = .{ .bytes = body } },
+    }) };
+}
+
+fn headRecord(a: Allocator, name: []const u8) !?Value {
+    const c = (try vm.head(a, name)) orelse return null;
+    return try vm.store().getValue(a, c);
+}
+
+fn call(a: Allocator, in: Value) !void {
+    const func = in.getText("fn") orelse return error.BadInput;
+    const arg = try vm.callArg(a, in);
+    const ans: Value = if (eql(u8, func, "tokens"))
+        try httpJson(a, 200, try tokens.tokensJson(a, tokens.rowsOf(try headRecord(a, tokens.tokens_head))))
+    else if (eql(u8, func, "defaults"))
+        try httpJson(a, 200, try tokens.defaultsJson(a, try headRecord(a, tokens.defaults_head)))
+    else if (eql(u8, func, "discovery"))
+        try httpJson(a, 200, try discovery.json(a, try headRecord(a, discovery.head)))
+    else if (eql(u8, func, "serve"))
+        try servePages(a, arg)
+    else
+        return error.UnknownFunction;
+    return vm.answer(a, if (isFilter(in)) try asFilterAnswer(a, ans) else ans);
+}
+
+fn toSdk(a: Allocator, v: Value) !scbor.Value {
+    return scbor.decode(a, try cbor.encode(a, v));
+}
+
+fn fromSdk(a: Allocator, v: scbor.Value) !Value {
+    return cbor.decode(a, try scbor.encode(a, v));
+}
+
+/// The read `/`: the pages from the app's own tree (the installed app record's `tree`).
+fn servePages(a: Allocator, arg: Value) !Value {
+    const req = try toSdk(a, arg);
+    const m = try app.manifestOf(a, app_name);
+    return fromSdk(a, try files.serve(a, req, scbor.Value.cidOf(m.get("tree")), files.rowOptions(req)));
+}
+
+// ---------------------------------------------------------------- steps
+
+fn resultRecord(a: Allocator, op: []const u8, fields: []const cbor.Entry) !Value {
+    var es: std.ArrayList(cbor.Entry) = .empty;
+    try es.appendSlice(a, &.{
+        .{ .key = "kind", .value = .{ .text = "amm-config-result" } },
+        .{ .key = "op", .value = .{ .text = op } },
+    });
+    try es.appendSlice(a, fields);
+    return .{ .map = es.items };
+}
+
+fn step(a: Allocator, in: Value) !void {
+    const s = vm.store();
+    const args = in.get("args") orelse return error.BadInput;
+    const box = args.getText("box") orelse "";
+    const body = try s.getValue(a, args.getCid("body") orelse return error.BadInput);
+    if (!eql(u8, box, tokens.admin_box)) return error.BadInput;
+    if (tokens.isAnswer(body)) {
+        _ = try vm.finish(a, s, try resultRecord(a, "answer", &.{}));
+        return;
+    }
+    const func = body.getText("fn") orelse "";
+    if (eql(u8, func, "enable")) return enable(a, in, args, body);
+    if (eql(u8, func, "disable")) return disable(a, in, args, body);
+    if (eql(u8, func, "defaults")) return defaults(a, args, body);
+    if (eql(u8, func, "discovery")) return discoverySet(a, in, args, body);
+    return answerRoot(a, args, func, try tokens.refusal(a, func, args.getCid("message"), "unknown-fn", "amm/admin takes enable, disable, defaults and discovery"));
+}
+
+/// Answer root (the message's sender) in the box it wrote to; the thread ends.
+fn answerRoot(a: Allocator, args: Value, op: []const u8, answer: Value) !void {
+    if (answer.get("error")) |e| std.log.err("{s}: refused: {s}", .{ op, e.getText("message") orelse "" });
+    if (args.getBytes("sender")) |sender| {
+        _ = vm.send(a, sender, tokens.admin_box, answer) catch |e| std.log.err("{s}: the answer is not sent: {s}", .{ op, @errorName(e) });
+    }
+    _ = try vm.finish(a, vm.store(), try resultRecord(a, op, &.{.{ .key = "answer", .value = answer }}));
+}
+
+fn saveRow(a: Allocator, row: Value) !void {
+    const s = vm.store();
+    const rec = try tokens.withRow(a, tokens.rowsOf(try headRecord(a, tokens.tokens_head)), row);
+    try vm.advance(tokens.tokens_head, try s.putValue(a, rec));
+}
+
+fn tokenIdArg(a: Allocator, body: Value) !?[]const u8 {
+    const fargs = body.get("args") orelse return null;
+    return tokens.canonicalId(a, fargs.getText("tokenId") orelse return null);
+}
+
+fn now(in: Value) u64 {
+    return in.getUint("at") orelse in.getUint("now") orelse 0;
+}
+
+/// `enable {tokenId, beef?}`.
+fn enable(a: Allocator, in: Value, args: Value, body: Value) !void {
+    const s = vm.store();
+    const message = args.getCid("message");
+    const id = (try tokenIdArg(a, body)) orelse return answerRoot(a, args, "enable", try tokens.refusal(a, "enable", message, "bad-args", "want args {tokenId: <txid>_<vout>, beef}"));
+    const prev = tokens.find(tokens.rowsOf(try headRecord(a, tokens.tokens_head)), id);
+    const fargs = body.get("args").?;
+    // The BEEF given, else the one kept on the token's row.
+    const env: Value = fargs.get("beef") orelse (if (prev) |p| p.get("deploy") else null) orelse return answerRoot(a, args, "enable", try tokens.refusal(a, "enable", message, "bad-args", "want args {tokenId, beef}: the deploy's Atomic BEEF"));
+    // The door's envelope (shruggr/skein#146: its exact wire bytes back through `wireOf`), or the bytes.
+    const wire: []const u8 = switch (env) {
+        .bytes => |b| b,
+        .map => w.record.wireOf(a, s, env) catch |e| return answerRoot(a, args, "enable", try tokens.refusal(a, "enable", message, "bad-args", try std.fmt.allocPrint(a, "beef: not a BEEF the door read ({s})", .{@errorName(e)}))),
+        else => return answerRoot(a, args, "enable", try tokens.refusal(a, "enable", message, "bad-args", "beef: want the deploy's Atomic BEEF (bytes)")),
+    };
+    const d = switch (try tokens.deployOf(a, id, wire)) {
+        .refused => |why| return answerRoot(a, args, "enable", try tokens.refusal(a, "enable", message, "bad-args", why)),
+        .ok => |x| x,
+    };
+    const row = try tokens.enabledRow(a, d, now(in), env);
+    try saveRow(a, row);
+    _ = try vm.emitEvent(a, try tokens.enabledEvent(a, d.token_id, wire, try headRecord(a, tokens.defaults_head)));
+    return answerRoot(a, args, "enable", try tokens.answer(a, "enable", message, try tokens.shown(a, row)));
+}
+
+/// `disable {tokenId}`.
+fn disable(a: Allocator, in: Value, args: Value, body: Value) !void {
+    const message = args.getCid("message");
+    const id = (try tokenIdArg(a, body)) orelse return answerRoot(a, args, "disable", try tokens.refusal(a, "disable", message, "bad-args", "want args {tokenId: <txid>_<vout>}"));
+    const prev = tokens.find(tokens.rowsOf(try headRecord(a, tokens.tokens_head)), id) orelse return answerRoot(a, args, "disable", try tokens.refusal(a, "disable", message, "bad-args", try std.fmt.allocPrint(a, "{s} is not on the list", .{id})));
+    const row = try tokens.updated(a, prev, .disabled, &.{.{ .key = "since", .value = .{ .uint = now(in) } }}, &.{});
+    try saveRow(a, row);
+    _ = try vm.emitEvent(a, try tokens.disabledEvent(a, id));
+    return answerRoot(a, args, "disable", try tokens.answer(a, "disable", message, try tokens.shown(a, row)));
+}
+
+/// `defaults {terms?, market?}`.
+fn defaults(a: Allocator, args: Value, body: Value) !void {
+    const s = vm.store();
+    const message = args.getCid("message");
+    switch (try tokens.withDefaults(a, try headRecord(a, tokens.defaults_head), body.get("args"))) {
+        .bad => |why| return answerRoot(a, args, "defaults", try tokens.refusal(a, "defaults", message, "bad-args", why)),
+        .ok => |rec| {
+            try vm.advance(tokens.defaults_head, try s.putValue(a, rec));
+            return answerRoot(a, args, "defaults", try tokens.answer(a, "defaults", message, rec));
+        },
+    }
+}
+
+/// `discovery {on}`: the record and the event.
+fn discoverySet(a: Allocator, in: Value, args: Value, body: Value) !void {
+    const message = args.getCid("message");
+    const on = discovery.onArg(body.get("args")) orelse return answerRoot(a, args, "discovery", try tokens.refusal(a, "discovery", message, "bad-args", "want args {on: true | false}"));
+    const rec = try discovery.record(a, on, now(in));
+    try vm.advance(discovery.head, try vm.store().putValue(a, rec));
+    _ = try vm.emitEvent(a, try discovery.event(a, on));
+    return answerRoot(a, args, "discovery", try tokens.answer(a, "discovery", message, rec));
+}

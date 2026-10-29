@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# open-exchange (host/cli.ts): the Open Exchange host on skein's host. skein is a checkout (SKEIN_DIR,
+# default the `skein` directory beside this repository); its settings are $SKEIN_HOME/host.env.
+set -euo pipefail
+root="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+export SKEIN_DIR="${SKEIN_DIR:-$(cd "$root/.." && pwd)/skein}"
+export SKEIN_HOME="${SKEIN_HOME:-$HOME/.skein}"
+[ -z "${SKEIN_KERNEL_BIN:-}" ] && [ -x "$SKEIN_DIR/kernel-zig/zig-out/bin/skein-kernel" ] && export SKEIN_KERNEL_BIN="$SKEIN_DIR/kernel-zig/zig-out/bin/skein-kernel"
+exec node --experimental-strip-types --no-warnings "$root/host/cli.ts" "$@"

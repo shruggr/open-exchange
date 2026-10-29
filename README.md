@@ -1,0 +1,137 @@
+# Open Exchange
+
+The Open Exchange is a distributable application host for 1Color token swaps. It runs on
+[skein](https://github.com/shruggr/skein)'s host, used as a library. The AMM itself is a
+library, [skein-amm](https://github.com/shruggr/skein-amm): the token app, its programs and
+the page library. Open Exchange adds the host program, the `swap` app, the images and the
+setup. The design is in shruggr/open-exchange#1 and shruggr/skein#164.
+
+## The shape
+
+- **swap**: the instance that serves the Swap, Liquidity, Your tokens and Settings pages.
+  - It records root's decisions as facts under its own heads.
+  - It emits each fact as an event.
+  - It asks nothing of anyone, and nothing answers back.
+- **The host** (`open-exchange run`): skein's host, `skein-host run`, plus its wiring for
+  swap's events.
+- **The token instances**: one per enabled token, at `<origin>/@<tokenId>`.
+  - Each comes from the image `token`, which installs skein-amm's token app.
+  - Each is born owned by the host's key: no claim.
+  - Each takes its deploy BEEF as an event on the token app's route.
+- **discovery**: the 1Color discovery topic `tm_color` and its lookup `ls_color`.
+  - It comes from the image `discovery`, which installs skein-1color.
+  - `setup` makes it. The Settings switch only starts and stops it.
+
+## The events (swap's app `amm`, box `amm/admin`, root's messages)
+
+| root's message | swap records | event | the host |
+|---|---|---|---|
+| `enable {tokenId, beef?}` | row `enabled` under `amm/tokens`, the BEEF kept | `token-enabled {tokenId, beef, terms?, market?}` | see below |
+| `disable {tokenId}` | row `disabled` | `token-disabled {tokenId}` | stops the instance (disabled; off its libp2p node); never removes it |
+| `discovery {on}` | `{on, since}` under `amm/discovery` | `discovery-on` / `discovery-off` | starts / stops `discovery` |
+| `defaults {terms?, market?}` | `amm/defaults` | none | the next `token-enabled` events carry them |
+
+When `token-enabled` names a token that has no instance yet, the host:
+
+1. Creates the instance `<tokenId>` from the image `token`, disabled.
+2. Records its names `[tm_color_<id>, ls_color_<id>, ls_amm_<id>]` for routing.
+3. Feeds in the deploy as `{kind: "deploy", beef}` in `amm/deploy`. The door checks the BEEF.
+4. If the deploy is admitted, publishes the instance.
+5. Sends `terms` into `amm/validator` and `market` into `amm/amm-p2p`, each as root's
+   message signed by the host's key.
+
+If the door refuses the deploy:
+
+- **A file store**: the instance is removed.
+- **A RocksDB or LMDB set**: the instance is left disabled, because a set cannot be removed.
+
+When `token-enabled` names a token whose instance exists:
+
+- **A stopped instance**: it is started.
+- **An instance with no token**: its deploy is fed in.
+
+Every reaction is idempotent and logged.
+
+**At start**, `run` reconciles the host's instance table with swap's heads:
+
+- `/amm/tokens`:
+  - `enabled` means the instance is made running.
+  - An enabled token with no instance is created. Its BEEF is read from swap's last
+    `token-enabled` event in swap's log.
+  - `disabled` means the instance is stopped.
+- `/amm/discovery`: on means `discovery` is started; off means it is stopped.
+
+Reads on swap (anyone):
+
+- `/amm/tokens`: `[{tokenId, topic, sym, dec, icon?, status, since}]`
+- `/amm/defaults`
+- `/amm/discovery`: `{on, since}`
+- `/`: the pages
+
+## Requirements
+
+- **A skein checkout** at or after the commit in `package.json` (`skein.commit`).
+  - It needs its `npm ci` done and its kernel built (`kernel-zig`, README there).
+  - The default location is `../skein`. `SKEIN_DIR` overrides it.
+  - Node strips no types under `node_modules`, so skein is not an npm dependency.
+- **One key** (skein#160): `SKEIN_KEY_FILE`. It owns every instance Open Exchange makes.
+- **The images**: this repository's `image/`. Open Exchange sets `SKEIN_IMAGES_DIR` to it.
+
+## Setup and run
+
+```
+bin/open-exchange setup --admin <your wallet's identity key>   # once, with the host stopped
+bin/open-exchange run
+```
+
+`setup` does the following:
+
+- If `$SKEIN_HOME/host.env` is absent, writes it with one key, RocksDB and swap at the root.
+  Add the network, origin, ports, headers feed and Arcade, as `skein-host` takes them.
+- If the key file is absent, makes it (mode 0600).
+- Makes the host skein, as `skein-host init` does.
+- Creates `swap` from the image `swap`.
+- Grants root on `swap` to `--admin`.
+- Creates `discovery` from the image `discovery`.
+- Registers discovery's `tm_color` and `ls_color` by root's messages.
+
+Running `setup` again changes nothing that already exists.
+
+`run` takes every setting `skein-host run` takes from `host.env`. It serves everything
+`skein-host` serves:
+
+- bare-host routing by topic
+- pages
+- libp2p
+- the chain feed
+- Arcade
+
+## Images (`image/<name>/etc/apps.json`, merged over skein's default image)
+
+| image | installs |
+|---|---|
+| `swap` | skein-chain v0.7.0 (tarball), `../../apps/swap`; root's route `/` → the pages |
+| `token` | skein-chain v0.7.0, skein-amm v0.22.0 (tarballs, by tree hash); root's `/submit`, `/lookup` |
+| `discovery` | skein-chain v0.7.0, skein-1color v0.12.1 (tarballs); root's `/submit`, `/lookup` |
+
+## Build and test
+
+```
+zig build test                      # the swap program's tests
+zig build bin                       # apps/swap/bin/config.wasm (committed)
+scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.22.1's web/ui + the 1Color pages
+npm run typecheck                   # host/ and scripts/ against ../skein
+SKEIN_DIR=… SKEIN_KERNEL_BIN=… [SKEIN_EQUIV_STORE=rocksdb] npm run accept
+```
+
+The acceptance (`scripts/accept/ox-accept.ts`) uses a scratch regtest host. It walks
+through these steps:
+
+1. setup
+2. run
+3. enable: the instance is born, its deploy admitted, its names served, its beats seen, and
+   bare-host `/lookup` is routed to it
+4. disable, then enable again
+5. discovery off, then on
+6. a restart, with reconcile
+7. a replay of every store

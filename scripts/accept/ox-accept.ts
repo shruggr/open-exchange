@@ -1,0 +1,278 @@
+// open-exchange#1 acceptance: the Open Exchange host on a scratch one-key host (regtest; RocksDB with
+// SKEIN_EQUIV_STORE=rocksdb, else SQLite files), through the commands' own code (host/cli.ts `setup`,
+// `startExchange`) and the front door over HTTP (root's messages by BRC-104, as a wallet sends them).
+//
+//   setup                → swap and discovery exist, born owned by the host's key; root on swap to the admin;
+//                          discovery serves tm_color and ls_color
+//   run                  → reconciled: swap's discovery is off, so discovery stopped
+//   root: defaults terms, then enable {tokenId, beef}   → the host reacts: the instance <id> born owned, its deploy
+//                          event admitted (amm/token), the three names served, beats, the terms sent;
+//                          bare-host /lookup ls_color_<id> routed; /amm/tokens: enabled, no url
+//   disable              → stopped (404 at /@<id>); enable again (no BEEF) → started
+//   discovery off / on   → stopped / started
+//   restart the host     → reconcile creates nothing and starts what swap says
+//   every store replays to itself
+//
+//   SKEIN_DIR=<skein checkout> SKEIN_KERNEL_BIN=<its kernel> [SKEIN_EQUIV_STORE=rocksdb] node --experimental-strip-types --no-warnings scripts/accept/ox-accept.ts
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createServer as httpServer, type ServerResponse } from "node:http";
+import { createServer } from "node:net";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { DISCOVERY, SWAP } from "../../host/exchange.ts";
+import { SKEIN_DIR, load, skein } from "../../host/skein.ts";
+import { setup, settings, startExchange, type Env, type Running } from "../../host/cli.ts";
+
+type Sdk = typeof import("../../../skein/node_modules/@bsv/sdk/dist/types/mod.d.ts");
+const sdk = await import(pathToFileURL(join(SKEIN_DIR, "node_modules/@bsv/sdk/dist/esm/mod.js")).href) as Sdk;
+const { LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } = sdk;
+const sk = await load();
+const { RawBox } = sk.raw;
+const { keyWallet } = await skein<typeof import("../../../skein/src/wallet.ts")>("src/wallet.ts");
+const { FakeArcade } = await skein<typeof import("../../../skein/src/host/fake-arcade.ts")>("src/host/fake-arcade.ts");
+const ROCKS = process.env.SKEIN_EQUIV_STORE === "rocksdb";
+const BACKEND = ROCKS ? "rocksdb" : "sqlite";
+const kernel = process.env.SKEIN_KERNEL_BIN ?? join(SKEIN_DIR, "kernel-zig/zig-out/bin/skein-kernel");
+
+let failures = 0;
+const check = (ok: boolean, what: string) => { process.stdout.write(`${ok ? "ok  " : "FAIL"} ${what}\n`); if (!ok) failures++; };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function until<T>(what: string, f: () => Promise<T | undefined> | T | undefined, ms = 30_000): Promise<T | undefined> {
+  for (const end = Date.now() + ms; ;) {
+    const v = await Promise.resolve().then(f).catch(() => undefined);
+    if (v) return v;
+    if (Date.now() > end) { process.stdout.write(`  (timed out waiting for ${what})\n`); return undefined; }
+    await sleep(150);
+  }
+}
+const freePort = () => new Promise<number>((resolve, reject) => {
+  const s = createServer();
+  s.once("error", reject);
+  s.listen(0, "127.0.0.1", () => { const p = (s.address() as { port: number }).port; s.close(() => resolve(p)); });
+});
+
+// ---------------------------------------------------------------- regtest (as skein-amm's amm-setup-accept.ts)
+const sha256d = (b: Uint8Array) => createHash("sha256").update(createHash("sha256").update(b).digest()).digest();
+const internal = (displayHex: string) => Buffer.from(displayHex, "hex").reverse();
+const REGTEST_GENESIS = Buffer.from("0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494dffff7f2002000000", "hex");
+const TARGET = 0x7fffffn << BigInt(8 * (0x20 - 3));
+function mine(prev: Uint8Array, merkleRoot: Uint8Array, time: number): Uint8Array {
+  const h = Buffer.alloc(80);
+  h.writeInt32LE(1, 0);
+  Buffer.from(prev).copy(h, 4);
+  Buffer.from(merkleRoot).copy(h, 36);
+  h.writeUInt32LE(time, 68);
+  h.writeUInt32LE(0x207fffff, 72);
+  for (let nonce = 0; ; nonce++) {
+    h.writeUInt32LE(nonce, 76);
+    if (BigInt("0x" + Buffer.from(sha256d(h)).reverse().toString("hex")) <= TARGET) return new Uint8Array(h);
+  }
+}
+const headers: Uint8Array[] = [mine(sha256d(REGTEST_GENESIS), sha256d(Buffer.concat([internal("cb".repeat(32)), internal("cc".repeat(32))])), 1_790_200_000)];
+function mineAlone(t: InstanceType<typeof Transaction>): number {
+  const height = headers.length + 1;
+  const cb = (height * 17 % 256).toString(16).padStart(2, "0").repeat(32);
+  t.merklePath = new MerklePath(height, [[{ offset: 0, hash: cb }, { offset: 1, hash: t.id("hex"), txid: true }]]);
+  headers.push(mine(sha256d(headers.at(-1)!), sha256d(Buffer.concat([internal(cb), internal(t.id("hex"))])), 1_790_200_000 + height * 600));
+  return height;
+}
+const holder = new PrivateKey("3333", 16);
+function deploy(seed: number, sym: string, dec: number) {
+  const t = new Transaction();
+  t.addInput({ sourceTXID: seed.toString(16).padStart(2, "0").repeat(32), sourceOutputIndex: 0, unlockingScript: UnlockingScript.fromHex("51"), sequence: 0xffffffff });
+  const lock = new P2PKH().lock(holder.toPublicKey().toHash());
+  const s = new LockingScript().writeOpCode(0x00).writeNumber(21_000_000).writeOpCode(0x6d).writeBin(Array.from(sk.cid.encode({ sym, dec }).bytes)).writeOpCode(0x75);
+  t.addOutput({ lockingScript: LockingScript.fromBinary([...s.toBinary(), ...lock.toBinary()]), satoshis: 1 });
+  return t;
+}
+
+// ---------------------------------------------------------------- the headers feed (SSE, hex), as SKEIN_HEADERS_URL
+const streams = new Set<ServerResponse>();
+const sse = httpServer((req, res) => {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  streams.add(res);
+  req.on("close", () => streams.delete(res));
+  // From the regtest genesis (height 0): a fresh host's image chain starts there.
+  res.write(`id: 0\ndata: ${REGTEST_GENESIS.toString("hex")}\n\n`);
+  headers.forEach((h, i) => res.write(`id: ${i + 1}\ndata: ${Buffer.from(h).toString("hex")}\n\n`));
+});
+/** A new block: on every open stream, as a live feed sends it. */
+const pushHeader = () => { const i = headers.length; for (const s of streams) s.write(`id: ${i}\ndata: ${Buffer.from(headers[i - 1]!).toString("hex")}\n\n`); };
+await new Promise<void>((r) => sse.listen(0, "127.0.0.1", r));
+const feedUrl = `http://127.0.0.1:${(sse.address() as { port: number }).port}/headers`;
+
+// ---------------------------------------------------------------- the host
+const home = mkdtempSync(join(tmpdir(), "ox-accept-"));
+const shared = new PrivateKey("0e0e0e", 16);
+const SHARED = shared.toPublicKey().toString();
+const admin = sk.hostenv.parseKey("0f".repeat(32), "admin");
+const ADMIN = admin.toPublicKey().toString();
+writeFileSync(join(home, "key"), `${shared.toHex()}\n`, { mode: 0o600 });
+const arcade = await FakeArcade.start();
+const port = await freePort(), hostPort = await freePort(), p2pPort = await freePort();
+const lines: string[] = [];
+writeFileSync(join(home, "host.env"), [
+  `SKEIN_KEY_FILE=${join(home, "key")}`,
+  ...(ROCKS ? [`SKEIN_STORE_ROCKSDB=${join(home, "store-rocksdb")}`] : []),
+  `SKEIN_ROOT_INSTANCE=${SWAP}`,
+  "SKEIN_NETWORK=regtest",
+  `SKEIN_ROUTER_PORT=${port}`,
+  `SKEIN_HOST_PORT=${hostPort}`,
+  `SKEIN_HEADERS_URL=${feedUrl}`,
+  `SKEIN_ARC_URL=${arcade.url}`, "SKEIN_ARC_TOKEN=t", `SKEIN_ARC_EVENTS_URL=${arcade.eventsUrl}`,
+  `SKEIN_LIBP2P_LISTEN=/ip4/127.0.0.1/tcp/${p2pPort}`,
+  `SKEIN_KERNEL_BIN=${kernel}`,
+  "",
+].join("\n"));
+const env: Env = { vars: { HOME: process.env.HOME, PATH: process.env.PATH, SKEIN_HOME: home }, out: (l) => { lines.push(l); if (process.env.VERBOSE) process.stdout.write(`  | ${l}\n`); }, err: (l) => { lines.push(`ERR ${l}`); process.stdout.write(`  ! ${l}\n`); } };
+const R = `http://127.0.0.1:${port}`;
+const get = async (path: string, host?: string) => { const r = await fetch(`${R}${path}`, host ? { headers: { host } } : {}); return { status: r.status, text: await r.text() }; };
+const getJson = async (path: string) => { const r = await get(path); return r.status === 200 ? JSON.parse(r.text) : undefined; };
+const { localTarget } = await skein<typeof import("../../../skein/src/client/target.ts")>("src/client/target.ts");
+/** An instance's root keys, read from its store (running or stopped), sorted. */
+const rootOf = async (_x: Running, h: string) => {
+  const t = localTarget(settings(sk, env).vars, h, keyWallet(admin));
+  try {
+    const v = await t.view();
+    const root = v.heads.find((x) => x.name === "grants")?.root;
+    const g = root ? await v.store.get(root) as { roles?: Record<string, Uint8Array[]> } : undefined;
+    return (g?.roles?.root ?? []).map((b) => Buffer.from(b).toString("hex")).sort();
+  } finally { await t.close(); }
+};
+const stores: Array<{ spec: string; h: string }> = [];
+const keep = (x: Running, h: string) => { const r = x.db.get(h); if (r && !stores.some((s) => s.h === h)) stores.push({ spec: sk.indexStore.storeSpec(r), h }); };
+
+let x: Running | undefined;
+try {
+  const dA = deploy(0x41, "AAA", 5);
+  const A = `${dA.id("hex")}_0`;
+  const tmA = `tm_color_${A}`, lsA = `ls_color_${A}`, ammA = `ls_amm_${A}`;
+
+  // ------------------------------------------------ setup
+  const t0 = Date.now();
+  const code = await setup(sk, env, ["--admin", ADMIN]);
+  check(code === 0, `open-exchange setup --admin: exit ${code} (${Date.now() - t0} ms)`);
+  const again = await setup(sk, env, ["--admin", ADMIN]);
+  check(again === 0 && lines.some((l) => /nothing to do \(everything exists\)/.test(l)), "setup again: a no-op (nothing to do)");
+  if (ROCKS) await sleep(1500); // the one-shot's kernel process lets the database go
+
+  // ------------------------------------------------ run
+  x = await startExchange(sk, settings(sk, env));
+  const r = x.host.router;
+  await x.exchange.idle();
+  keep(x, SWAP); keep(x, DISCOVERY);
+  check((await rootOf(x, SWAP)).join() === [SHARED, ADMIN].sort().join(), `swap: born owned by the host's key, root granted to the admin (${(await rootOf(x, SWAP)).map((k) => k.slice(0, 8)).join(", ")})`);
+  check((await rootOf(x, DISCOVERY)).join() === SHARED, "discovery: born owned by the host's key");
+  check(x.db.get(DISCOVERY)?.status === "disabled", `run: reconciled — swap's discovery is off, discovery stopped (${x.db.get(DISCOVERY)?.status})`);
+  check((await get("/")).status === 200 && /<html/i.test((await get("/")).text), "GET / at the bare host: swap's pages (SKEIN_ROOT_INSTANCE)");
+  check(JSON.stringify(await getJson(`/@${SWAP}/amm/tokens`)) === "[]" && JSON.stringify(await getJson(`/@${SWAP}/amm/discovery`)) === '{"on":false}', "swap: /amm/tokens [] and /amm/discovery {on:false}");
+
+  const box = new RawBox(keyWallet(admin), `${R}/@${SWAP}`);
+  const swapId = x.db.get(SWAP)!.identity!;
+  const send = async (body: Record<string, unknown>) => await box.send(swapId, "amm/admin", body);
+
+  // ------------------------------------------------ a block with A's deploy, live
+  const hA = mineAlone(dA);
+  pushHeader();
+  const swapChain = await until("swap's chain at A's block", async () => { const k = (await r.hydrate(SWAP)).kernel; const t = await k.chainTip(); return t && t.height >= hA ? t : undefined; });
+  check(!!swapChain, `the host chain at ${swapChain?.height} (A's deploy mined at ${hA})`);
+
+  // ------------------------------------------------ defaults, then enable A
+  await send({ fn: "defaults", args: { terms: { lpFeeBps: 30, validatorFeeBps: 5, commissionBps: 25 }, market: { minCommissionBps: 2 } } });
+  const df = await until("the defaults", async () => { const d = await getJson(`/@${SWAP}/amm/defaults`) as { terms?: unknown } | undefined; return d?.terms ? d : undefined; });
+  check(!!df, `defaults set by root: ${JSON.stringify(df)}`);
+  const t1 = Date.now();
+  await send({ fn: "enable", args: { tokenId: A, beef: Uint8Array.from(dA.toAtomicBEEF()) } });
+  const rowA = await until("A enabled on swap", async () => (await getJson(`/@${SWAP}/amm/tokens`) as Array<Record<string, unknown>>)?.find((t) => t.tokenId === A && t.status === "enabled"));
+  check(!!rowA && !("url" in rowA) && !("deploy" in rowA) && rowA.sym === "AAA", `swap: A enabled, a fact (${JSON.stringify(rowA)})`);
+  const up = await until("/@A/amm/token", async () => { const t = await get(`/@${A}/amm/token`); return t.status === 200 ? t : undefined; }, 60_000);
+  check(!!up && JSON.parse(up.text).tokenId === A, `the host reacted: /@<A>/amm/token 200 ${Date.now() - t1} ms after the enable`);
+  await x.exchange.idle();
+  keep(x, A);
+  check((await rootOf(x, A)).join() === SHARED, "A: born owned by the host's key (no claim)");
+  check(JSON.stringify(JSON.parse(x.db.get(A)!.topics ?? "[]")) === JSON.stringify([tmA, lsA, ammA]), `A: routed by ${x.db.get(A)!.topics}`);
+  const lt = await getJson(`/@${A}/amm/listTopicManagers`), ll = await getJson(`/@${A}/amm/listLookupServiceProviders`);
+  check(!!lt && tmA in lt && !!ll && lsA in ll && ammA in ll, `A serves ${Object.keys(lt ?? {}).join(", ")} · ${Object.keys(ll ?? {}).join(", ")}`);
+  const kA = (await r.hydrate(A)).kernel;
+  const terms = await until("A's amm/terms", async () => { const c = await kA.call("head", "amm/terms"); return c ? await kA.store.get(c as never) as Record<string, unknown> : undefined; });
+  check(!!terms && JSON.stringify(terms).includes("25"), `A: the default terms sent as root's message (amm/terms ${JSON.stringify(terms)})`);
+  const market = await until("A's amm/market", async () => { const c = await kA.call("head", "amm/market"); return c ? await kA.store.get(c as never) as Record<string, unknown> : undefined; });
+  check(!!market, `A: the default market sent (amm/market ${JSON.stringify(market)})`);
+  const lk = await fetch(`${R}/lookup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ service: lsA, query: { type: "color-admission", version: 1, assetId: A, topic: tmA, outpoints: [`${dA.id("hex")}.0`] } }) });
+  const lkb = await lk.json().catch(() => ({})) as { type?: string; outputs?: unknown[] };
+  check(lk.status === 200 && lkb.type === "output-list" && (lkb.outputs?.length ?? 0) === 1, `bare-host POST /lookup ${lsA.slice(0, 18)}…: routed to A, color-admission answers the deploy (${lk.status} ${JSON.stringify(lkb).slice(0, 100)})`);
+  const liveT = await until("tm_color_A-live", async () => { const v = await getJson(`/@${A}/amm/.live/${tmA}-live`) as unknown[] | undefined; return v?.length ? v : undefined; }, 60_000);
+  check(!!liveT, `beats on tm_color_<A>-live (${liveT?.length ?? 0})`);
+  const liveL = await until("ls_amm_A-live", async () => { const v = await getJson(`/@${A}/amm/.live/${ammA}-live`) as unknown[] | undefined; return v?.length ? v : undefined; }, 60_000);
+  check(!!liveL, `beats on ls_amm_<A>-live (${liveL?.length ?? 0})`);
+
+  // ------------------------------------------------ disable, enable again
+  await send({ fn: "disable", args: { tokenId: A } });
+  const off = await until("A stopped", async () => (await get(`/@${A}/amm/token`)).status === 404 ? true : undefined);
+  await x.exchange.idle();
+  check(!!off && x.db.get(A)?.status === "disabled" && (await getJson(`/@${SWAP}/amm/tokens`))[0].status === "disabled", "disable: swap's row disabled; the instance stopped (404 at /@<A>)");
+  await send({ fn: "enable", args: { tokenId: A } });
+  const on = await until("A started", async () => (await get(`/@${A}/amm/token`)).status === 200 ? true : undefined);
+  await x.exchange.idle();
+  check(!!on && x.db.get(A)?.status === "enabled", "enable again (no BEEF: swap's kept deploy): started, /@<A>/amm/token 200");
+  check(!lines.some((l) => /created from image token/.test(l) && false) && lines.filter((l) => /token-enabled: created from image token/.test(l)).length === 1, "…created once");
+
+  // ------------------------------------------------ discovery on / off
+  await send({ fn: "discovery", args: { on: true } });
+  const dOn = await until("discovery started", async () => (await get(`/@${DISCOVERY}/1color/listTopicManagers`)).status === 200 ? true : undefined);
+  await x.exchange.idle();
+  const dtm = await getJson(`/@${DISCOVERY}/1color/listTopicManagers`), dls = await getJson(`/@${DISCOVERY}/1color/listLookupServiceProviders`);
+  check(!!dOn && "tm_color" in (dtm ?? {}) && "ls_color" in (dls ?? {}), `discovery {on:true}: started, serves ${Object.keys(dtm ?? {}).join(", ")} · ${Object.keys(dls ?? {}).join(", ")}`);
+  const sub = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify(["tm_color"]) }, body: Uint8Array.from(dA.toBEEF()) });
+  check(sub.status === 200, `bare-host POST /submit X-Topics tm_color: routed to discovery (${sub.status} ${(await sub.text()).slice(0, 120)})`);
+  await send({ fn: "discovery", args: { on: false } });
+  const dOff = await until("discovery stopped", async () => (await get(`/@${DISCOVERY}/1color/listTopicManagers`)).status === 404 ? true : undefined);
+  check(!!dOff && JSON.parse((await get(`/@${SWAP}/amm/discovery`)).text).on === false, "discovery {on:false}: stopped (404)");
+  await send({ fn: "discovery", args: { on: true } });
+  check(!!(await until("discovery started again", async () => (await get(`/@${DISCOVERY}/1color/listTopicManagers`)).status === 200 ? true : undefined)), "discovery {on:true} again: started");
+  await x.exchange.idle();
+
+  // ------------------------------------------------ restart: reconcile
+  const rows0 = x.db.list().map((r) => `${r.handle}:${r.status}`).sort().join(" ");
+  const created0 = lines.filter((l) => /created \S+ .* from the/.test(l)).length;
+  await x.stop();
+  x = undefined;
+  if (ROCKS) await sleep(1500);
+  x = await startExchange(sk, settings(sk, env));
+  await x.exchange.idle();
+  const rows1 = x.db.list().map((r) => `${r.handle}:${r.status}`).sort().join(" ");
+  const created1 = lines.filter((l) => /created \S+ .* from the/.test(l)).length;
+  check(rows0 === rows1 && created0 === created1, `restart: reconcile created nothing; the table as swap says (${rows1})`);
+  check((await get(`/@${A}/amm/token`)).status === 200 && (await get(`/@${DISCOVERY}/1color/listTopicManagers`)).status === 200, "restart: A and discovery serve");
+  // swap says A disabled → the restart stops it (the host table follows swap, not its own last state).
+  await send({ fn: "disable", args: { tokenId: A } });
+  await until("A stopped", async () => (await get(`/@${A}/amm/token`)).status === 404 ? true : undefined);
+  await x.exchange.idle();
+  x.db.setStatus(A, "enabled"); // the host's table out of step with swap (as after a crash between the fact and the reaction)
+  await x.stop();
+  x = undefined;
+  if (ROCKS) await sleep(1500);
+  x = await startExchange(sk, settings(sk, env));
+  await x.exchange.idle();
+  check(x.db.get(A)?.status === "disabled", `restart with the host's table out of step (A enabled there, disabled on swap): reconciled to swap — A ${x.db.get(A)?.status}`);
+} catch (e) {
+  check(false, `threw: ${(e as Error).stack}`);
+} finally {
+  await x?.stop().catch(() => {});
+  await arcade.close();
+  for (const s of streams) s.end();
+  sse.close();
+  if (ROCKS) await sleep(1500);
+  for (const { spec, h } of stores) {
+    const rp = spawnSync("node", ["--experimental-strip-types", "--no-warnings", join(SKEIN_DIR, "kernel-zig/equiv/replays.ts"), spec], { encoding: "utf8", env: { ...process.env, SKEIN_KERNEL_BIN: kernel } });
+    if (rp.status !== 0) process.stdout.write(rp.stdout.slice(-1500) + rp.stderr.slice(-1500));
+    check(rp.status === 0 && /identical .*the source store reproduced exactly/.test(rp.stdout), `${h}: the store replays to itself exactly`);
+  }
+}
+if (failures && process.env.KEEP_LOG) writeFileSync(join(tmpdir(), "ox-accept.log"), lines.join("\n"));
+if (process.env.KEEP) process.stdout.write(`kept ${home}\n`); else rmSync(home, { recursive: true, force: true });
+process.stdout.write(failures ? `open exchange acceptance (${BACKEND}): ${failures} FAILED\n` : `open exchange acceptance (${BACKEND}): all ok\n`);
+process.exit(failures ? 1 : 0);

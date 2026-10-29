@@ -1,0 +1,19 @@
+.{
+    .name = .open_exchange,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xf7e22713b189a87e,
+    .dependencies = .{
+        // The AMM library (shruggr/skein-amm): its deploy reader (src/deploy.zig) and fixtures, and
+        // through it the overlay engine's SDK modules and the 1Color module the swap program links.
+        .skein_amm = .{
+            .url = "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.22.0.tar.gz",
+            .hash = "skein_amm-0.22.0-IsSTBg5ulAA853JqrrnHSG74znp4q52uM5e2Hbqv9PGd",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "apps",
+    },
+}
