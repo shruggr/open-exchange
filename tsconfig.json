@@ -8,9 +8,14 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
-    "types": ["node"],
-    "typeRoots": ["../skein/node_modules/@types"],
-    "skipLibCheck": true
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": true,
+    "rewriteRelativeImportExtensions": true
   },
-  "include": ["host", "scripts"]
+  "include": [
+    "host",
+    "scripts"
+  ]
 }

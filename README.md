@@ -43,7 +43,8 @@ When `token-enabled` names a token that has no instance yet, the host:
 If the door refuses the deploy:
 
 - **A file store**: the instance is removed.
-- **A RocksDB or LMDB set**: the instance is left disabled, because a set cannot be removed.
+- **A set** (the host's SQLite database, RocksDB or LMDB): the instance is left disabled,
+  because a set cannot be removed.
 
 When `token-enabled` names a token whose instance exists:
 
@@ -70,23 +71,26 @@ Reads on swap (anyone):
 
 ## Requirements
 
-- **A skein checkout** at or after the commit in `package.json` (`skein.commit`).
-  - It needs its `npm ci` done and its kernel built (`kernel-zig`, README there).
-  - The default location is `../skein`. `SKEIN_DIR` overrides it.
-  - Node strips no types under `node_modules`, so skein is not an npm dependency.
+- **Node 24 or later**, on any platform node runs on. Nothing else: no toolchain.
+- **skein 0.1.0**, the npm dependency (`package.json`). Its host is built to JavaScript, and its
+  kernel is one wasm file the host loads: one machine per active instance on a worker thread,
+  every instance a set of the host's one SQLite database (`SKEIN_STORE_SQLITE`, the default
+  `setup` writes). A host.env naming `SKEIN_STORE_ROCKSDB` runs skein's native kernel process
+  instead; that needs a skein checkout with its kernel built (the hosted shape).
 - **One key** (skein#160): `SKEIN_KEY_FILE`. It owns every instance Open Exchange makes.
 - **The images**: this repository's `image/`. Open Exchange sets `SKEIN_IMAGES_DIR` to it.
 
 ## Setup and run
 
 ```
-bin/open-exchange setup --admin <your wallet's identity key>   # once, with the host stopped
-bin/open-exchange run
+npx open-exchange setup --admin <your wallet's identity key>   # once, with the host stopped
+npx open-exchange run
 ```
 
 `setup` does the following:
 
-- If `$SKEIN_HOME/host.env` is absent, writes it with one key, RocksDB and swap at the root.
+- If `$SKEIN_HOME/host.env` is absent, writes it with one key, the host's SQLite database
+  (`SKEIN_STORE_SQLITE=$SKEIN_HOME/store.sqlite`, the wasm kernel) and swap at the root.
   Add the network, origin, ports, headers feed and Arcade, as `skein-host` takes them.
 - If the key file is absent, makes it (mode 0600).
 - Makes the host skein, as `skein-host init` does.
@@ -120,9 +124,15 @@ Running `setup` again changes nothing that already exists.
 zig build test                      # the swap program's tests
 zig build bin                       # apps/swap/bin/config.wasm (committed)
 scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.22.1's web/ui + the 1Color pages
-npm run typecheck                   # host/ and scripts/ against ../skein
-SKEIN_DIR=… SKEIN_KERNEL_BIN=… [SKEIN_EQUIV_STORE=rocksdb] npm run accept
+npm install --no-save <skein-0.1.0.tgz>   # skein from its `npm pack` until it is published
+npm run typecheck                   # host/ and scripts/ against node_modules/skein
+npm run build                       # dist/ (what the package runs; `npm pack` builds it)
+[SKEIN_REPLAY_DIR=<skein checkout>] [SKEIN_EQUIV_STORE=rocksdb|file] npm run accept
 ```
+
+The acceptance runs on the wasm host by default. `SKEIN_REPLAY_DIR` names a skein checkout with
+its native kernel built: every store is then replayed by the native reference. From a package
+install: `node node_modules/open-exchange/dist/scripts/accept/ox-accept.js`.
 
 The acceptance (`scripts/accept/ox-accept.ts`) uses a scratch regtest host. It walks
 through these steps:

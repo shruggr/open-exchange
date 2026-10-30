@@ -36,7 +36,7 @@ export interface ExchangeOptions {
   router: Router;
   /** The host's key (one-key mode): its identity (hex) owns every instance; its wallet signs root's messages. */
   hostKey: string;
-  hostWallet: import("../../skein/src/host/signer.ts").Signer extends { wallet(h: string): infer W } ? W : never;
+  hostWallet: import("skein/dist/host/signer.js").Signer extends { wallet(h: string): infer W } ? W : never;
   log(line: string): void;
 }
 

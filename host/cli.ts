@@ -1,4 +1,3 @@
-#!/usr/bin/env -S node --experimental-strip-types --no-warnings
 // `open-exchange`: the Open Exchange host (shruggr/open-exchange#1) — skein's host (`skein-host run`,
 // the same settings: $SKEIN_HOME/host.env under the environment) plus the Open Exchange's wiring of
 // the events its `swap` instance emits (shruggr/skein#164; exchange.ts).
@@ -20,7 +19,7 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { Exchange, DISCOVERY, DISCOVERY_TOPICS, SWAP } from "./exchange.ts";
-import { IMAGES_DIR, SKEIN_DIR, load, skeinPin, type Skein } from "./skein.ts";
+import { IMAGES_DIR, load, skeinVersion, type Skein } from "./skein.ts";
 
 type Vars = Record<string, string | undefined>;
 export interface Env { vars: Vars; out(l: string): void; err(l: string): void }
@@ -29,7 +28,7 @@ const USAGE = `usage:
   open-exchange run                     the host (skein-host run's) with swap's events wired; reconciled with swap at start
   open-exchange setup [--admin <hex>]   once, host stopped: key + host.env if absent, the host skein, swap and discovery (owned
                                         by the host's key), root on swap to --admin, discovery's tm_color / ls_color registered
-settings: $SKEIN_HOME/host.env (every SKEIN_* line; the environment wins), as skein-host's; SKEIN_DIR: the skein checkout`;
+settings: $SKEIN_HOME/host.env (every SKEIN_* line; the environment wins), as skein-host's`;
 
 /** The settings, host.env under the environment, with this repository's images. */
 export function settings(sk: Skein, given: Env): Env {
@@ -46,16 +45,9 @@ function hostKey(sk: Skein, vars: Vars) {
   return { identity: signer.identity(""), wallet: signer.wallet("") };
 }
 
-function pinCheck(env: Env): void {
-  const p = skeinPin();
-  if (p.ok === false) env.err(`open-exchange: WARNING: the skein checkout at ${SKEIN_DIR} (${p.head}) does not contain ${p.commit}, which this needs (git pull it)`);
-  else if (p.ok === undefined) env.err(`open-exchange: WARNING: could not check the skein checkout at ${SKEIN_DIR} against ${p.commit}`);
-}
-
 export async function main(argv: string[], given: Env): Promise<number> {
   const [cmd, ...rest] = argv;
   if (!cmd || cmd === "help" || cmd === "-h" || cmd === "--help") { given.out(USAGE); return cmd ? 0 : 2; }
-  pinCheck(given);
   const sk = await load();
   if (cmd === "run") return await run(sk, settings(sk, given), rest);
   if (cmd === "setup") return await setup(sk, given, rest);
@@ -82,7 +74,7 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   const early: Array<[string, Record<string, unknown>]> = [];
   const host = await sk.cli.runHost(db, env, { router: { ...o.router, appEvent: (h: string, rec: Record<string, unknown>) => { if (ex) ex.event(h, rec); else early.push([h, rec]); } } });
   ex = new Exchange({ sk, router: host.router, hostKey: key.identity, hostWallet: key.wallet, log: (l) => env.out(`[open-exchange] ${l}`) });
-  env.out(`open-exchange: swap's events wired (token-enabled, token-disabled, discovery-on, discovery-off) · images ${IMAGES_DIR} · the host's key ${key.identity.slice(0, 8)}…`);
+  env.out(`open-exchange: swap's events wired (token-enabled, token-disabled, discovery-on, discovery-off) · skein ${skeinVersion()} · images ${IMAGES_DIR} · the host's key ${key.identity.slice(0, 8)}…`);
   for (const [h, rec] of early.splice(0)) ex.event(h, rec);
   void ex.reconcile();
   const exchange = ex;
@@ -108,12 +100,16 @@ async function run(sk: Skein, env: Env, rest: string[]): Promise<number> {
 
 // ---------------------------------------------------------------- setup
 
-/** The host.env a new Open Exchange starts from (when there is none): one key, RocksDB, swap at the root. */
+/**
+ * The host.env a new Open Exchange starts from (when there is none): one key, the host's one SQLite
+ * database (every instance a set of it, run by the wasm kernel skein's host loads: the settled split),
+ * swap at the root.
+ */
 function defaultHostEnv(home: string): string {
   return [
     "# Open Exchange host settings (open-exchange setup). Every SKEIN_* line; the environment wins.",
     `SKEIN_KEY_FILE=${join(home, "key")}`,
-    `SKEIN_STORE_ROCKSDB=${join(home, "store-rocksdb")}`,
+    `SKEIN_STORE_SQLITE=${join(home, "store.sqlite")}`,
     `SKEIN_ROOT_INSTANCE=${SWAP}`,
     "",
   ].join("\n");
@@ -127,7 +123,7 @@ export async function setup(sk: Skein, given: Env, rest: string[]): Promise<numb
   mkdirSync(home, { recursive: true });
   // host.env and the one key, when absent (never overwritten).
   const envFile = join(home, sk.hostenv.HOST_ENV);
-  if (!existsSync(envFile)) { writeFileSync(envFile, defaultHostEnv(home), { mode: 0o600 }); given.out(`open-exchange setup: ${envFile} written (one key, RocksDB, swap at the root): add the network, origin, ports, headers and Arcade settings skein-host takes`); }
+  if (!existsSync(envFile)) { writeFileSync(envFile, defaultHostEnv(home), { mode: 0o600 }); given.out(`open-exchange setup: ${envFile} written (one key, the host's SQLite database, swap at the root): add the network, origin, ports, headers and Arcade settings skein-host takes`); }
   const env = settings(sk, given);
   const keyFile = env.vars.SKEIN_KEY_FILE;
   if (keyFile && !existsSync(keyFile)) {

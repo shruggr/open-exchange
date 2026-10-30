@@ -1,5 +1,6 @@
-// open-exchange#1 acceptance: the Open Exchange host on a scratch one-key host (regtest; RocksDB with
-// SKEIN_EQUIV_STORE=rocksdb, else SQLite files), through the commands' own code (host/cli.ts `setup`,
+// open-exchange#1 acceptance: the Open Exchange host on a scratch one-key host (regtest; the wasm kernel
+// over the host's one SQLite database by default — the distributable's shape; RocksDB with the native
+// kernel process with SKEIN_EQUIV_STORE=rocksdb, a native serve per SQLite file with =file), through the commands' own code (host/cli.ts `setup`,
 // `startExchange`) and the front door over HTTP (root's messages by BRC-104, as a wallet sends them).
 //
 //   setup                → swap and discovery exist, born owned by the host's key; root on swap to the admin;
@@ -11,9 +12,12 @@
 //   disable              → stopped (404 at /@<id>); enable again (no BEEF) → started
 //   discovery off / on   → stopped / started
 //   restart the host     → reconcile creates nothing and starts what swap says
-//   every store replays to itself
+//   every store replays to itself — by the NATIVE reference (`skein-kernel replay`, skein's
+//   kernel-zig/equiv/replays.ts) when SKEIN_REPLAY_DIR names a skein checkout with its kernel built;
+//   a store the wasm kernel wrote is then checked against the native kernel's replay of it
 //
-//   SKEIN_DIR=<skein checkout> SKEIN_KERNEL_BIN=<its kernel> [SKEIN_EQUIV_STORE=rocksdb] node --experimental-strip-types --no-warnings scripts/accept/ox-accept.ts
+//   [SKEIN_REPLAY_DIR=<skein checkout>] [SKEIN_KERNEL_BIN=<a native kernel>] [SKEIN_EQUIV_STORE=rocksdb|file] node scripts/accept/ox-accept.ts
+//   (built: node dist/scripts/accept/ox-accept.js — what a package install runs)
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer as httpServer, type ServerResponse } from "node:http";
@@ -21,21 +25,25 @@ import { createServer } from "node:net";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DISCOVERY, SWAP } from "../../host/exchange.ts";
-import { SKEIN_DIR, load, skein } from "../../host/skein.ts";
+import { load, skein } from "../../host/skein.ts";
 import { setup, settings, startExchange, type Env, type Running } from "../../host/cli.ts";
 
-type Sdk = typeof import("../../../skein/node_modules/@bsv/sdk/dist/types/mod.d.ts");
-const sdk = await import(pathToFileURL(join(SKEIN_DIR, "node_modules/@bsv/sdk/dist/esm/mod.js")).href) as Sdk;
+type Sdk = typeof import("@bsv/sdk");
+// @bsv/sdk as skein's own dependency (resolved from the skein package).
+const sdk = await import(pathToFileURL(createRequire(fileURLToPath(import.meta.resolve("skein/package.json"))).resolve("@bsv/sdk")).href) as Sdk;
 const { LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } = sdk;
 const sk = await load();
 const { RawBox } = sk.raw;
-const { keyWallet } = await skein<typeof import("../../../skein/src/wallet.ts")>("src/wallet.ts");
-const { FakeArcade } = await skein<typeof import("../../../skein/src/host/fake-arcade.ts")>("src/host/fake-arcade.ts");
+const { keyWallet } = await skein<typeof import("skein/dist/wallet.js")>("src/wallet.ts");
+const { FakeArcade } = await skein<typeof import("skein/dist/host/fake-arcade.js")>("src/host/fake-arcade.ts");
 const ROCKS = process.env.SKEIN_EQUIV_STORE === "rocksdb";
-const BACKEND = ROCKS ? "rocksdb" : "sqlite";
-const kernel = process.env.SKEIN_KERNEL_BIN ?? join(SKEIN_DIR, "kernel-zig/zig-out/bin/skein-kernel");
+const FILE = process.env.SKEIN_EQUIV_STORE === "file";
+const BACKEND = ROCKS ? "rocksdb" : FILE ? "sqlite files, native serve" : "wasm";
+const REPLAY_DIR = process.env.SKEIN_REPLAY_DIR;
+const kernel = process.env.SKEIN_KERNEL_BIN ?? (REPLAY_DIR ? join(REPLAY_DIR, "kernel-zig/zig-out/bin/skein-kernel") : undefined);
 
 let failures = 0;
 const check = (ok: boolean, what: string) => { process.stdout.write(`${ok ? "ok  " : "FAIL"} ${what}\n`); if (!ok) failures++; };
@@ -116,7 +124,7 @@ const port = await freePort(), hostPort = await freePort(), p2pPort = await free
 const lines: string[] = [];
 writeFileSync(join(home, "host.env"), [
   `SKEIN_KEY_FILE=${join(home, "key")}`,
-  ...(ROCKS ? [`SKEIN_STORE_ROCKSDB=${join(home, "store-rocksdb")}`] : []),
+  ...(ROCKS ? [`SKEIN_STORE_ROCKSDB=${join(home, "store-rocksdb")}`] : FILE ? [] : [`SKEIN_STORE_SQLITE=${join(home, "store.sqlite")}`]),
   `SKEIN_ROOT_INSTANCE=${SWAP}`,
   "SKEIN_NETWORK=regtest",
   `SKEIN_ROUTER_PORT=${port}`,
@@ -124,14 +132,14 @@ writeFileSync(join(home, "host.env"), [
   `SKEIN_HEADERS_URL=${feedUrl}`,
   `SKEIN_ARC_URL=${arcade.url}`, "SKEIN_ARC_TOKEN=t", `SKEIN_ARC_EVENTS_URL=${arcade.eventsUrl}`,
   `SKEIN_LIBP2P_LISTEN=/ip4/127.0.0.1/tcp/${p2pPort}`,
-  `SKEIN_KERNEL_BIN=${kernel}`,
+  ...(kernel ? [`SKEIN_KERNEL_BIN=${kernel}`] : []),
   "",
 ].join("\n"));
 const env: Env = { vars: { HOME: process.env.HOME, PATH: process.env.PATH, SKEIN_HOME: home }, out: (l) => { lines.push(l); if (process.env.VERBOSE) process.stdout.write(`  | ${l}\n`); }, err: (l) => { lines.push(`ERR ${l}`); process.stdout.write(`  ! ${l}\n`); } };
 const R = `http://127.0.0.1:${port}`;
 const get = async (path: string, host?: string) => { const r = await fetch(`${R}${path}`, host ? { headers: { host } } : {}); return { status: r.status, text: await r.text() }; };
 const getJson = async (path: string) => { const r = await get(path); return r.status === 200 ? JSON.parse(r.text) : undefined; };
-const { localTarget } = await skein<typeof import("../../../skein/src/client/target.ts")>("src/client/target.ts");
+const { localTarget } = await skein<typeof import("skein/dist/client/target.js")>("src/client/target.ts");
 /** An instance's root keys, read from its store (running or stopped), sorted. */
 const rootOf = async (_x: Running, h: string) => {
   const t = localTarget(settings(sk, env).vars, h, keyWallet(admin));
@@ -266,8 +274,9 @@ try {
   for (const s of streams) s.end();
   sse.close();
   if (ROCKS) await sleep(1500);
-  for (const { spec, h } of stores) {
-    const rp = spawnSync("node", ["--experimental-strip-types", "--no-warnings", join(SKEIN_DIR, "kernel-zig/equiv/replays.ts"), spec], { encoding: "utf8", env: { ...process.env, SKEIN_KERNEL_BIN: kernel } });
+  if (!REPLAY_DIR) process.stdout.write("  (the replays skipped: SKEIN_REPLAY_DIR names no skein checkout with the native kernel)\n");
+  for (const { spec, h } of REPLAY_DIR ? stores : []) {
+    const rp = spawnSync("node", ["--experimental-strip-types", "--no-warnings", join(REPLAY_DIR!, "kernel-zig/equiv/replays.ts"), spec], { encoding: "utf8", env: { ...process.env, ...(kernel ? { SKEIN_KERNEL_BIN: kernel } : {}) } });
     if (rp.status !== 0) process.stdout.write(rp.stdout.slice(-1500) + rp.stderr.slice(-1500));
     check(rp.status === 0 && /identical .*the source store reproduced exactly/.test(rp.stdout), `${h}: the store replays to itself exactly`);
   }
