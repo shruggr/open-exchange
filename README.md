@@ -111,8 +111,8 @@ Running `setup` again changes nothing that already exists.
 | image | installs |
 |---|---|
 | `swap` | skein-chain v0.7.0 (tarball), `../../apps/swap`; root's route `/` → the pages |
-| `token` | skein-chain v0.7.0, skein-amm v0.22.0 (tarballs, by tree hash); root's `/submit`, `/lookup` |
-| `discovery` | skein-chain v0.7.0, skein-1color v0.12.1 (tarballs); root's `/submit`, `/lookup` |
+| `token` | skein-chain v0.7.0, skein-amm v0.24.0 (tarballs, by tree hash; 0.24.0: skein-overlay 0.19.0 and skein-1color 0.13.0, undecided is not rejected); root's `/submit`, `/lookup` |
+| `discovery` | skein-chain v0.7.0, skein-1color v0.13.0 (tarballs; engine skein-overlay 0.19.0); root's `/submit`, `/lookup` |
 
 ## Build and test
 
