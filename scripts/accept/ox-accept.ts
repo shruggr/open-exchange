@@ -33,12 +33,12 @@ import { setup, settings, startExchange, type Env, type Running } from "../../ho
 
 type Sdk = typeof import("@bsv/sdk");
 // @bsv/sdk as skein's own dependency (resolved from the skein package).
-const sdk = await import(pathToFileURL(createRequire(fileURLToPath(import.meta.resolve("skein/package.json"))).resolve("@bsv/sdk")).href) as Sdk;
+const sdk = await import(pathToFileURL(createRequire(fileURLToPath(import.meta.resolve("@dcasegr/skein/package.json"))).resolve("@bsv/sdk")).href) as Sdk;
 const { LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } = sdk;
 const sk = await load();
 const { RawBox } = sk.raw;
-const { keyWallet } = await skein<typeof import("skein/dist/wallet.js")>("src/wallet.ts");
-const { FakeArcade } = await skein<typeof import("skein/dist/host/fake-arcade.js")>("src/host/fake-arcade.ts");
+const { keyWallet } = await skein<typeof import("@dcasegr/skein/dist/wallet.js")>("src/wallet.ts");
+const { FakeArcade } = await skein<typeof import("@dcasegr/skein/dist/host/fake-arcade.js")>("src/host/fake-arcade.ts");
 const ROCKS = process.env.SKEIN_EQUIV_STORE === "rocksdb";
 const FILE = process.env.SKEIN_EQUIV_STORE === "file";
 const BACKEND = ROCKS ? "rocksdb" : FILE ? "sqlite files, native serve" : "wasm";
@@ -139,7 +139,7 @@ const env: Env = { vars: { HOME: process.env.HOME, PATH: process.env.PATH, SKEIN
 const R = `http://127.0.0.1:${port}`;
 const get = async (path: string, host?: string) => { const r = await fetch(`${R}${path}`, host ? { headers: { host } } : {}); return { status: r.status, text: await r.text() }; };
 const getJson = async (path: string) => { const r = await get(path); return r.status === 200 ? JSON.parse(r.text) : undefined; };
-const { localTarget } = await skein<typeof import("skein/dist/client/target.js")>("src/client/target.ts");
+const { localTarget } = await skein<typeof import("@dcasegr/skein/dist/client/target.js")>("src/client/target.ts");
 /** An instance's root keys, read from its store (running or stopped), sorted. */
 const rootOf = async (_x: Running, h: string) => {
   const t = localTarget(settings(sk, env).vars, h, keyWallet(admin));

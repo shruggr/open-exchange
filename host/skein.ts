@@ -1,5 +1,5 @@
 // The skein host as a library (shruggr/skein#164; the settled split, 2026-10-31): Open Exchange runs on
-// skein's host, the npm package `skein` (a dependency by version). The package ships its host built to
+// skein's host, the npm package `@dcasegr/skein` (a dependency by version). The package ships its host built to
 // JavaScript (dist/) and the kernel as one wasm file, so nothing here needs a toolchain or a checkout.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,32 +17,32 @@ export const OX_ROOT = rootOf(dirname(fileURLToPath(import.meta.url)));
 /** The images Open Exchange creates its instances from (swap, token, discovery). */
 export const IMAGES_DIR = join(OX_ROOT, "image");
 
-/** A module of the skein package, by its source path there (`src/host/cli.ts` → `skein/dist/host/cli.js`). */
+/** A module of the skein package, by its source path there (`src/host/cli.ts` → `@dcasegr/skein/dist/host/cli.js`). */
 export async function skein<T>(rel: string): Promise<T> {
   const m = /^src\/(.+)\.ts$/.exec(rel);
   if (!m) throw new Error(`skein module ${rel}: a path under src/, a .ts file`);
-  return await import(`skein/dist/${m[1]}.js`) as T;
+  return await import(`@dcasegr/skein/dist/${m[1]}.js`) as T;
 }
 
 /** The skein package's version (for the log). */
 export function skeinVersion(): string {
-  try { return (JSON.parse(readFileSync(fileURLToPath(import.meta.resolve("skein/package.json")), "utf8")) as { version: string }).version; } catch { return "?"; }
+  try { return (JSON.parse(readFileSync(fileURLToPath(import.meta.resolve("@dcasegr/skein/package.json")), "utf8")) as { version: string }).version; } catch { return "?"; }
 }
 
-export type Cli = typeof import("skein/dist/host/cli.js");
-export type RouterMod = typeof import("skein/dist/host/router.js");
-export type Router = import("skein/dist/host/router.js").Router;
-export type HostDb = import("skein/dist/host/instances.js").HostDb;
-export type InstancesMod = typeof import("skein/dist/host/instances.js");
-export type HostEnvMod = typeof import("skein/dist/host/hostenv.js");
-export type SignerMod = typeof import("skein/dist/host/signer.js");
-export type RawMod = typeof import("skein/dist/client/raw.js");
-export type CidMod = typeof import("skein/dist/runtime/cid.js");
-export type DoorMod = typeof import("skein/dist/host/door-answer.js");
-export type StoresMod = typeof import("skein/dist/host/stores.js");
-export type IndexStoreMod = typeof import("skein/dist/runtime/index-store.js");
-export type P2PMod = typeof import("skein/dist/host/p2p.js");
-export type ControlMod = typeof import("skein/dist/host/control.js");
+export type Cli = typeof import("@dcasegr/skein/dist/host/cli.js");
+export type RouterMod = typeof import("@dcasegr/skein/dist/host/router.js");
+export type Router = import("@dcasegr/skein/dist/host/router.js").Router;
+export type HostDb = import("@dcasegr/skein/dist/host/instances.js").HostDb;
+export type InstancesMod = typeof import("@dcasegr/skein/dist/host/instances.js");
+export type HostEnvMod = typeof import("@dcasegr/skein/dist/host/hostenv.js");
+export type SignerMod = typeof import("@dcasegr/skein/dist/host/signer.js");
+export type RawMod = typeof import("@dcasegr/skein/dist/client/raw.js");
+export type CidMod = typeof import("@dcasegr/skein/dist/runtime/cid.js");
+export type DoorMod = typeof import("@dcasegr/skein/dist/host/door-answer.js");
+export type StoresMod = typeof import("@dcasegr/skein/dist/host/stores.js");
+export type IndexStoreMod = typeof import("@dcasegr/skein/dist/runtime/index-store.js");
+export type P2PMod = typeof import("@dcasegr/skein/dist/host/p2p.js");
+export type ControlMod = typeof import("@dcasegr/skein/dist/host/control.js");
 
 /** The skein modules the host uses, loaded once. */
 export async function load() {
