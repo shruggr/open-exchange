@@ -1,6 +1,6 @@
 {
   "name": "open-exchange",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The Open Exchange: an application host on skein's host — the swap instance's facts materialized as token instances (shruggr/open-exchange#1, shruggr/skein#164).",
   "type": "module",
   "private": true,
@@ -9,7 +9,7 @@
   },
   "skein": {
     "repository": "https://github.com/shruggr/skein",
-    "commit": "f6aa3e5",
+    "commit": "62e814c",
     "note": "skein runs from a checkout's TypeScript sources (node strips no types under node_modules): SKEIN_DIR, default ../skein, at or after this commit"
   },
   "scripts": {

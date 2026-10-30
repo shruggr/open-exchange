@@ -110,9 +110,9 @@ Running `setup` again changes nothing that already exists.
 
 | image | installs |
 |---|---|
-| `swap` | skein-chain v0.7.0 (tarball), `../../apps/swap`; root's route `/` → the pages |
-| `token` | skein-chain v0.7.0, skein-amm v0.24.0 (tarballs, by tree hash; 0.24.0: skein-overlay 0.19.0 and skein-1color 0.13.0, undecided is not rejected); root's `/submit`, `/lookup` |
-| `discovery` | skein-chain v0.7.0, skein-1color v0.13.0 (tarballs; engine skein-overlay 0.19.0); root's `/submit`, `/lookup` |
+| `swap` | skein-chain v0.7.1 (tarball; 0.7.1: a reorg broadcasts nothing), `../../apps/swap`; root's route `/` → the pages |
+| `token` | skein-chain v0.7.1, skein-amm v0.24.1 (tarballs, by tree hash; 0.24.1: skein-overlay 0.20.0 and skein-1color 0.13.1, the settled sync design — announce, then fetch; no wants; every proof published); root's `/submit`, `/lookup` |
+| `discovery` | skein-chain v0.7.1, skein-1color v0.13.1 (tarballs; engine skein-overlay 0.20.0); root's `/submit`, `/lookup` |
 
 ## Build and test
 

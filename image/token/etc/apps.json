@@ -1,12 +1,12 @@
 {
   "install": [
     {
-      "url": "https://github.com/shruggr/skein-chain/archive/refs/tags/v0.7.0.tar.gz",
-      "hash": "a0b7e76905c501c83f93eff5ea385e46b3dc3c30"
+      "url": "https://github.com/shruggr/skein-chain/archive/refs/tags/v0.7.1.tar.gz",
+      "hash": "70deb24d5c806fd8e45cc4b6fa85e524996b07a0"
     },
     {
-      "url": "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.24.0.tar.gz",
-      "hash": "62662e9e1661809186173d801f4fcf9ccf63a0b8"
+      "url": "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.24.1.tar.gz",
+      "hash": "fe03055371da390986e1e3eccbbde938db3fbeb4"
     }
   ],
   "routes": [
