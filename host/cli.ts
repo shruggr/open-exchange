@@ -103,10 +103,16 @@ async function run(sk: Skein, env: Env, rest: string[]): Promise<number> {
 
 // ---------------------------------------------------------------- setup
 
+/** The exchange's network for now (skein#156: its headers come from that network's Teranode mesh and data hub). */
+export const NETWORK = "test";
+/** The overlay's libp2p bootstrap peer (the swap.skein.nexus node), baked in until discovery has defaults. */
+export const OVERLAY_BOOTSTRAP = "/ip4/100.101.206.71/tcp/4001/p2p/16Uiu2HAmVaxF2a3HnwRUHyEL8XCg92E5Hx9voSjb13tABcpdg1bo";
+
 /**
  * The host.env a new Open Exchange starts from (when there is none): one key, the host's one SQLite
  * database (every instance a set of it, run by the wasm kernel skein's host loads: the settled split),
- * swap at the root.
+ * swap at the root, the network and the overlay's bootstrap peer. No headers setting: the host follows
+ * the network's Teranode mesh and syncs the chain from its data hub on the first run (skein#156).
  */
 function defaultHostEnv(home: string): string {
   return [
@@ -114,6 +120,9 @@ function defaultHostEnv(home: string): string {
     `SKEIN_KEY_FILE=${join(home, "key")}`,
     `SKEIN_STORE_SQLITE=${join(home, "store.sqlite")}`,
     `SKEIN_ROOT_INSTANCE=${SWAP}`,
+    `SKEIN_NETWORK=${NETWORK}`,
+    "# The overlay's bootstrap peer (swap.skein.nexus): baked in until discovery has defaults.",
+    `SKEIN_LIBP2P_BOOTSTRAP=${OVERLAY_BOOTSTRAP}`,
     "",
   ].join("\n");
 }
@@ -126,7 +135,7 @@ export async function setup(sk: Skein, given: Env, rest: string[]): Promise<numb
   mkdirSync(home, { recursive: true });
   // host.env and the one key, when absent (never overwritten).
   const envFile = join(home, sk.hostenv.HOST_ENV);
-  if (!existsSync(envFile)) { writeFileSync(envFile, defaultHostEnv(home), { mode: 0o600 }); given.out(`open-exchange setup: ${envFile} written (one key, the host's SQLite database, swap at the root): add the network, origin, ports, headers and Arcade settings skein-host takes`); }
+  if (!existsSync(envFile)) { writeFileSync(envFile, defaultHostEnv(home), { mode: 0o600 }); given.out(`open-exchange setup: ${envFile} written (one key, the host's SQLite database, swap at the root, network ${NETWORK}, the overlay's bootstrap peer)`); }
   const env = settings(sk, given);
   const keyFile = env.vars.SKEIN_KEY_FILE;
   if (keyFile && !existsSync(keyFile)) {
@@ -141,7 +150,8 @@ export async function setup(sk: Skein, given: Env, rest: string[]): Promise<numb
     if (alive) { env.err("open-exchange setup: the host is running (its control socket answers): stop it first"); return 1; }
   }
   const db = new sk.instances.HostDb(join(home, "host.db"));
-  const host = await sk.cli.runHost(db, env, { router: { cron: false } });
+  // The headers tracker stays off here: setup only makes instances; `run` syncs the chain (and fills theirs).
+  const host = await sk.cli.runHost(db, { ...env, vars: { ...env.vars, SKEIN_TERANODE: "off" } }, { router: { cron: false } });
   const r = host.router;
   const ex = new Exchange({ sk, router: r, hostKey: key.identity, hostWallet: key.wallet, log: (l) => env.out(`[open-exchange] ${l}`) });
   const made: string[] = [];

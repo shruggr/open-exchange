@@ -87,15 +87,20 @@ Reads on swap (anyone):
 ## Setup and run
 
 ```
-npx open-exchange setup   # once, with the host stopped
-npx open-exchange run     # then open its pages, connect your wallet, Settings: Claim this exchange
+npx open-exchange setup
+npx open-exchange run
 ```
+
+The first `run` syncs the block header chain from the network before it serves (a few minutes on testnet).
 
 `setup` does the following:
 
 - If `$SKEIN_HOME/host.env` is absent, writes it with one key, the host's SQLite database
-  (`SKEIN_STORE_SQLITE=$SKEIN_HOME/store.sqlite`, the wasm kernel) and swap at the root.
-  Add the network, origin, ports, headers feed and Arcade, as `skein-host` takes them.
+  (`SKEIN_STORE_SQLITE=$SKEIN_HOME/store.sqlite`, the wasm kernel), swap at the root, the network
+  (`SKEIN_NETWORK=test`) and the overlay's bootstrap peer (`SKEIN_LIBP2P_BOOTSTRAP`, baked in until
+  discovery has defaults). There is no headers setting: the host follows the network's Teranode
+  P2P mesh and syncs the chain from its data hub (skein#156). Every other `skein-host` setting
+  (origin, ports, Arcade) may be added.
 - If the key file is absent, makes it (mode 0600).
 - Makes the host skein, as `skein-host init` does.
 - Creates `swap` from the image `swap`, unclaimed: its claim route is open to anyone.
