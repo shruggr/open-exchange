@@ -123,7 +123,7 @@ Running `setup` again changes nothing that already exists.
 ```
 zig build test                      # the swap program's tests
 zig build bin                       # apps/swap/bin/config.wasm (committed)
-scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.22.1's web/ui + the 1Color pages
+scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.25.0's web/ui + the 1Color pages
 npm install --no-save <skein-0.1.0.tgz>   # skein from its `npm pack` until it is published
 npm run typecheck                   # host/ and scripts/ against node_modules/@dcasegr/skein
 npm run build                       # dist/ (what the package runs; `npm pack` builds it)
