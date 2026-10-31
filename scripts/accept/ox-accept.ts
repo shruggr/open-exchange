@@ -3,8 +3,10 @@
 // kernel process with SKEIN_EQUIV_STORE=rocksdb, a native serve per SQLite file with =file), through the commands' own code (host/cli.ts `setup`,
 // `startExchange`) and the front door over HTTP (root's messages by BRC-104, as a wallet sends them).
 //
-//   setup                → swap and discovery exist, born owned by the host's key; root on swap to the admin;
-//                          discovery serves tm_color and ls_color
+//   setup                → swap exists UNCLAIMED (no root; /.well-known/skein claimed:false), discovery born owned
+//                          by the host's key and serving tm_color and ls_color
+//   the claim            → the admin's own message in box `claim` (BRC-104, as the Settings page sends it): root
+//                          [admin], claimed:true, /skeins?key=<admin> lists swap; a second claim refused
 //   run                  → reconciled: swap's discovery is off, so discovery stopped
 //   root: defaults terms, then enable {tokenId, beef}   → the host reacts: the instance <id> born owned, its deploy
 //                          event admitted (amm/token), the three names served, beats, the terms sent;
@@ -161,9 +163,12 @@ try {
 
   // ------------------------------------------------ setup
   const t0 = Date.now();
-  const code = await setup(sk, env, ["--admin", ADMIN]);
-  check(code === 0, `open-exchange setup --admin: exit ${code} (${Date.now() - t0} ms)`);
-  const again = await setup(sk, env, ["--admin", ADMIN]);
+  const code = await setup(sk, env, []);
+  check(code === 0, `open-exchange setup: exit ${code} (${Date.now() - t0} ms)`);
+  check(lines.some((l) => /swap: unclaimed — the first wallet to claim it on Settings is root/.test(l)), "setup says: swap unclaimed — the first wallet to claim it on Settings is root");
+  const old = await setup(sk, { ...env, err: (l) => lines.push(`ERR ${l}`) }, ["--admin", ADMIN]);
+  check(old === 2, `setup --admin: refused (no such flag; usage, exit ${old})`);
+  const again = await setup(sk, env, []);
   check(again === 0 && lines.some((l) => /nothing to do \(everything exists\)/.test(l)), "setup again: a no-op (nothing to do)");
   if (ROCKS) await sleep(1500); // the one-shot's kernel process lets the database go
 
@@ -172,14 +177,31 @@ try {
   const r = x.host.router;
   await x.exchange.idle();
   keep(x, SWAP); keep(x, DISCOVERY);
-  check((await rootOf(x, SWAP)).join() === [SHARED, ADMIN].sort().join(), `swap: born owned by the host's key, root granted to the admin (${(await rootOf(x, SWAP)).map((k) => k.slice(0, 8)).join(", ")})`);
+  check((await rootOf(x, SWAP)).length === 0, `swap: unclaimed after setup — nobody holds root (${(await rootOf(x, SWAP)).map((k) => k.slice(0, 8)).join(", ") || "none"})`);
   check((await rootOf(x, DISCOVERY)).join() === SHARED, "discovery: born owned by the host's key");
+  const card = async (path: string) => await getJson(path) as { handle?: string; identity?: string; claimed?: boolean } | undefined;
+  const swapId = x.db.get(SWAP)!.identity!;
+  const c0 = await card("/.well-known/skein"), c0at = await card(`/@${SWAP}/.well-known/skein`);
+  check(c0?.handle === SWAP && c0.identity === swapId && c0.claimed === false && c0at?.claimed === false, `GET /.well-known/skein at swap (the bare host's root instance, and /@swap/): claimed false (${JSON.stringify(c0)})`);
+  const held = async (key: string) => (await getJson(`/skeins?key=${key}`) as Array<{ handle: string }> | undefined)?.map((h) => h.handle) ?? [];
+  check((await held(ADMIN)).length === 0 && !(await held(SHARED)).includes(SWAP), `/skeins?key=: the admin holds nothing yet, nor does the host's key hold swap (${(await held(SHARED)).join(", ") || "none listed"})`);
+
+  // ------------------------------------------------ the claim: the admin's own message in box `claim`, as the Settings page sends it
+  await new RawBox(keyWallet(admin), `${R}/@${SWAP}`).send(swapId, "claim", {});
+  const claimed = await until("swap claimed", async () => (await rootOf(x!, SWAP)).length ? true : undefined);
+  check(!!claimed && (await rootOf(x, SWAP)).join() === ADMIN, `the claim by the admin key: root on swap = [admin] (${(await rootOf(x, SWAP)).map((k) => k.slice(0, 8)).join(", ")})`);
+  check((await card("/.well-known/skein"))?.claimed === true, "GET /.well-known/skein at swap: claimed true");
+  check((await held(ADMIN)).join() === SWAP, `/skeins?key=<admin>: [${(await held(ADMIN)).join(", ")}]`);
+  const other = new PrivateKey("4444", 16);
+  await new RawBox(keyWallet(other), `${R}/@${SWAP}`).send(swapId, "claim", {}).catch(() => undefined);
+  await r.settled();
+  await (await r.hydrate(SWAP)).kernel.idle();
+  check((await rootOf(x, SWAP)).join() === ADMIN && (await held(other.toPublicKey().toString())).length === 0, `a second claim by another key: refused, root unchanged (${(await rootOf(x, SWAP)).map((k) => k.slice(0, 8)).join(", ")})`);
   check(x.db.get(DISCOVERY)?.status === "disabled", `run: reconciled — swap's discovery is off, discovery stopped (${x.db.get(DISCOVERY)?.status})`);
   check((await get("/")).status === 200 && /<html/i.test((await get("/")).text), "GET / at the bare host: swap's pages (SKEIN_ROOT_INSTANCE)");
   check(JSON.stringify(await getJson(`/@${SWAP}/amm/tokens`)) === "[]" && JSON.stringify(await getJson(`/@${SWAP}/amm/discovery`)) === '{"on":false}', "swap: /amm/tokens [] and /amm/discovery {on:false}");
 
   const box = new RawBox(keyWallet(admin), `${R}/@${SWAP}`);
-  const swapId = x.db.get(SWAP)!.identity!;
   const send = async (body: Record<string, unknown>) => await box.send(swapId, "amm/admin", body);
 
   // ------------------------------------------------ a block with A's deploy, live

@@ -5,14 +5,16 @@
 //   open-exchange run                    the host: skein-host run's router, ports, libp2p node, chain feed,
 //                                        Arcade, pages; swap's events wired; at start the instances
 //                                        reconciled with swap's heads
-//   open-exchange setup [--admin <hex>]  once, with the host stopped: the one key and host.env (when
+//   open-exchange setup                  once, with the host stopped: the one key and host.env (when
 //                                        absent), the host skein (skein-host init's), then `swap` from the
-//                                        image swap and `discovery` from the image discovery, both owned
-//                                        by the host's key; root on swap granted to --admin (a wallet's
-//                                        identity key); discovery's topic tm_color and lookup ls_color
-//                                        registered by root's messages. Again: a no-op where things exist
+//                                        image swap, UNCLAIMED (its claim route from anyone: the first
+//                                        wallet to claim it on Settings is root), and `discovery` from the
+//                                        image discovery, owned by the host's key; discovery's topic
+//                                        tm_color and lookup ls_color registered by root's messages.
+//                                        Again: a no-op where things exist
 //
-// Open Exchange runs ONE key (skein#160, SKEIN_KEY_FILE): it owns every instance it makes. Its images are
+// Open Exchange runs ONE key (skein#160, SKEIN_KEY_FILE): it owns every instance it makes but swap, whose
+// root is whoever claims it. Its images are
 // this repository's image/ (SKEIN_IMAGES_DIR is set to it).
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -26,8 +28,9 @@ export interface Env { vars: Vars; out(l: string): void; err(l: string): void }
 
 const USAGE = `usage:
   open-exchange run                     the host (skein-host run's) with swap's events wired; reconciled with swap at start
-  open-exchange setup [--admin <hex>]   once, host stopped: key + host.env if absent, the host skein, swap and discovery (owned
-                                        by the host's key), root on swap to --admin, discovery's tm_color / ls_color registered
+  open-exchange setup                   once, host stopped: key + host.env if absent, the host skein, swap (unclaimed: the first
+                                        wallet to claim it on Settings is root) and discovery (owned by the host's key),
+                                        discovery's tm_color / ls_color registered
 settings: $SKEIN_HOME/host.env (every SKEIN_* line; the environment wins), as skein-host's`;
 
 /** The settings, host.env under the environment, with this repository's images. */
@@ -116,9 +119,9 @@ function defaultHostEnv(home: string): string {
 }
 
 export async function setup(sk: Skein, given: Env, rest: string[]): Promise<number> {
-  const { values: v, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { admin: { type: "string" } } });
+  let positionals: string[];
+  try { ({ positionals } = parseArgs({ args: rest, allowPositionals: true, options: {} })); } catch (e) { given.err(`open-exchange setup: ${(e as Error).message} (no --admin since 0.3.0: the first wallet to claim swap on Settings is root)`); given.err(USAGE); return 2; }
   if (positionals.length) { given.err(USAGE); return 2; }
-  if (v.admin !== undefined && !/^0[23][0-9a-f]{64}$/.test(v.admin)) { given.err("open-exchange setup --admin: an identity key (33 bytes, hex)"); return 2; }
   const home = sk.hostenv.homeOf(given.vars);
   mkdirSync(home, { recursive: true });
   // host.env and the one key, when absent (never overwritten).
@@ -143,16 +146,10 @@ export async function setup(sk: Skein, given: Env, rest: string[]): Promise<numb
   const ex = new Exchange({ sk, router: r, hostKey: key.identity, hostWallet: key.wallet, log: (l) => env.out(`[open-exchange] ${l}`) });
   const made: string[] = [];
   try {
-    // swap: the Settings and Swap pages, root's decisions (image swap), born owned by the host's key.
-    if (!db.get(SWAP)) { const c = await r.createInstance(SWAP, key.identity, { image: "swap", owned: true }); made.push(`${SWAP} ${c.url}`); }
+    // swap: the Settings and Swap pages, root's decisions (image swap), UNCLAIMED: no owned, no claim, so the
+    // image's claim route stands, from anyone (the key passed is only checked as a key; nothing records it).
+    if (!db.get(SWAP)) { const c = await r.createInstance(SWAP, key.identity, { image: "swap" }); made.push(`${SWAP} ${c.url} (unclaimed)`); }
     else env.out(`open-exchange setup: ${SWAP} exists (${db.get(SWAP)!.status})`);
-    if (v.admin) {
-      const l = await r.hydrate(SWAP);
-      const g = await l.kernel.store.get(await l.kernel.call("head", "grants") as never).catch(() => undefined) as { roles?: Record<string, Uint8Array[]> } | undefined;
-      const holds = (g?.roles?.root ?? []).some((k) => Buffer.from(k).toString("hex") === v.admin);
-      if (holds) env.out(`open-exchange setup: ${v.admin.slice(0, 8)}… holds root on ${SWAP} already`);
-      else { await ex.rootMessage(SWAP, "grant", { op: "add", role: "root", principal: Uint8Array.from(Buffer.from(v.admin, "hex")) }); made.push(`root on ${SWAP} granted to ${v.admin}`); }
-    }
     // discovery: the 1Color discovery topic (image discovery), born owned, routed by tm_color and ls_color.
     if (!db.get(DISCOVERY)) { const c = await r.createInstance(DISCOVERY, key.identity, { image: "discovery", owned: true, topics: DISCOVERY_TOPICS }); made.push(`${DISCOVERY} ${c.url}`); }
     else env.out(`open-exchange setup: ${DISCOVERY} exists (${db.get(DISCOVERY)!.status})`);
@@ -167,7 +164,8 @@ export async function setup(sk: Skein, given: Env, rest: string[]): Promise<numb
     } else env.out(`open-exchange setup: ${DISCOVERY} is stopped (swap's discovery is off): its registrations are left as they are`);
     for (const m of made) env.out(`open-exchange setup: made ${m}`);
     if (!made.length) env.out("open-exchange setup: nothing to do (everything exists)");
-    env.out(`open-exchange setup: done · the host's key ${key.identity} owns ${SWAP} and ${DISCOVERY} · run: open-exchange run`);
+    env.out(`open-exchange setup: ${SWAP}: ${(await rootOn(r, SWAP)).length ? "claimed" : "unclaimed — the first wallet to claim it on Settings is root"}`);
+    env.out(`open-exchange setup: done · the host's key ${key.identity} owns ${DISCOVERY} · run: open-exchange run`);
     return 0;
   } catch (e) {
     env.err(`open-exchange setup: ${(e as Error).stack ?? e}`);
@@ -176,6 +174,15 @@ export async function setup(sk: Skein, given: Env, rest: string[]): Promise<numb
     await host.stop();
     db.close();
   }
+}
+
+/** The keys root is held by on an instance (its head `grants`), hex. */
+async function rootOn(r: { hydrate(h: string): Promise<{ kernel: { call(op: string, name: string): Promise<unknown>; store: { get(c: never): Promise<unknown> } } }> }, handle: string): Promise<string[]> {
+  const l = await r.hydrate(handle);
+  const root = await l.kernel.call("head", "grants");
+  if (!root) return [];
+  const g = await l.kernel.store.get(root as never).catch(() => undefined) as { roles?: Record<string, Uint8Array[]> } | undefined;
+  return (g?.roles?.root ?? []).map((k) => Buffer.from(k).toString("hex"));
 }
 
 if (import.meta.main) {

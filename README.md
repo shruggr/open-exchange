@@ -12,6 +12,8 @@ setup. The design is in shruggr/open-exchange#1 and shruggr/skein#164.
   - It records root's decisions as facts under its own heads.
   - It emits each fact as an event.
   - It asks nothing of anyone, and nothing answers back.
+  - `setup` makes it UNCLAIMED. The first wallet to claim it (Settings: "Claim this
+    exchange") is root. Someone else got there first: set up again in a fresh `SKEIN_HOME`.
 - **The host** (`open-exchange run`): skein's host, `skein-host run`, plus its wiring for
   swap's events.
 - **The token instances**: one per enabled token, at `<origin>/@<tokenId>`.
@@ -20,7 +22,8 @@ setup. The design is in shruggr/open-exchange#1 and shruggr/skein#164.
   - Each takes its deploy BEEF as an event on the token app's route.
 - **discovery**: the 1Color discovery topic `tm_color` and its lookup `ls_color`.
   - It comes from the image `discovery`, which installs skein-1color.
-  - `setup` makes it. The Settings switch only starts and stops it.
+  - `setup` makes it, born owned by the host's key: no claim.
+  - The Settings switch only starts and stops it.
 
 ## The events (swap's app `amm`, box `amm/admin`, root's messages)
 
@@ -72,19 +75,20 @@ Reads on swap (anyone):
 ## Requirements
 
 - **Node 24 or later**, on any platform node runs on. Nothing else: no toolchain.
-- **skein 0.1.0**, the npm dependency (`package.json`). Its host is built to JavaScript, and its
+- **skein 0.1.2**, the npm dependency (`package.json`). Its host is built to JavaScript, and its
   kernel is one wasm file the host loads: one machine per active instance on a worker thread,
   every instance a set of the host's one SQLite database (`SKEIN_STORE_SQLITE`, the default
   `setup` writes). A host.env naming `SKEIN_STORE_ROCKSDB` runs skein's native kernel process
   instead; that needs a skein checkout with its kernel built (the hosted shape).
-- **One key** (skein#160): `SKEIN_KEY_FILE`. It owns every instance Open Exchange makes.
+- **One key** (skein#160): `SKEIN_KEY_FILE`. It owns every instance Open Exchange makes, except
+  swap: swap's root is the wallet that claims it.
 - **The images**: this repository's `image/`. Open Exchange sets `SKEIN_IMAGES_DIR` to it.
 
 ## Setup and run
 
 ```
-npx open-exchange setup --admin <your wallet's identity key>   # once, with the host stopped
-npx open-exchange run
+npx open-exchange setup   # once, with the host stopped
+npx open-exchange run     # then open its pages, connect your wallet, Settings: Claim this exchange
 ```
 
 `setup` does the following:
@@ -94,12 +98,16 @@ npx open-exchange run
   Add the network, origin, ports, headers feed and Arcade, as `skein-host` takes them.
 - If the key file is absent, makes it (mode 0600).
 - Makes the host skein, as `skein-host init` does.
-- Creates `swap` from the image `swap`.
-- Grants root on `swap` to `--admin`.
+- Creates `swap` from the image `swap`, unclaimed: its claim route is open to anyone.
 - Creates `discovery` from the image `discovery`.
 - Registers discovery's `tm_color` and `ls_color` by root's messages.
 
 Running `setup` again changes nothing that already exists.
+
+The admin is a claim. Open the pages, connect a wallet and go to Settings. While nobody holds
+root on swap, Settings shows one card, "Claim this exchange". The wallet that claims it is
+root: it enables tokens and sets terms. A second claim is refused. `GET <swap>/.well-known/skein`
+answers `claimed`.
 
 `run` takes every setting `skein-host run` takes from `host.env`. It serves everything
 `skein-host` serves:
@@ -114,7 +122,7 @@ Running `setup` again changes nothing that already exists.
 
 | image | installs |
 |---|---|
-| `swap` | skein-chain v0.7.1 (tarball; 0.7.1: a reorg broadcasts nothing), `../../apps/swap`; root's route `/` → the pages |
+| `swap` | skein-chain v0.7.1 (tarball; 0.7.1: a reorg broadcasts nothing), `../../apps/swap` (pages: skein-amm v0.26.0's web/ui); root's route `/` → the pages; no root: the first claim's sender is root |
 | `token` | skein-chain v0.7.1, skein-amm v0.24.1 (tarballs, by tree hash; 0.24.1: skein-overlay 0.20.0 and skein-1color 0.13.1, the settled sync design — announce, then fetch; no wants; every proof published); root's `/submit`, `/lookup` |
 | `discovery` | skein-chain v0.7.1, skein-1color v0.13.1 (tarballs; engine skein-overlay 0.20.0); root's `/submit`, `/lookup` |
 
@@ -123,8 +131,8 @@ Running `setup` again changes nothing that already exists.
 ```
 zig build test                      # the swap program's tests
 zig build bin                       # apps/swap/bin/config.wasm (committed)
-scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.25.0's web/ui + the 1Color pages
-npm install --no-save <skein-0.1.0.tgz>   # skein from its `npm pack` until it is published
+scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.26.0's web/ui + the 1Color pages
+npm install --no-save <dcasegr-skein-0.1.2.tgz>   # skein from its `npm pack` until it is published
 npm run typecheck                   # host/ and scripts/ against node_modules/@dcasegr/skein
 npm run build                       # dist/ (what the package runs; `npm pack` builds it)
 [SKEIN_REPLAY_DIR=<skein checkout>] [SKEIN_EQUIV_STORE=rocksdb|file] npm run accept
@@ -137,11 +145,12 @@ install: `node node_modules/open-exchange/dist/scripts/accept/ox-accept.js`.
 The acceptance (`scripts/accept/ox-accept.ts`) uses a scratch regtest host. It walks
 through these steps:
 
-1. setup
-2. run
-3. enable: the instance is born, its deploy admitted, its names served, its beats seen, and
+1. setup: swap unclaimed (`/.well-known/skein` → `claimed: false`), discovery owned
+2. the claim by the admin key: root; a second claim refused
+3. run
+4. enable: the instance is born, its deploy admitted, its names served, its beats seen, and
    bare-host `/lookup` is routed to it
-4. disable, then enable again
-5. discovery off, then on
-6. a restart, with reconcile
-7. a replay of every store
+5. disable, then enable again
+6. discovery off, then on
+7. a restart, with reconcile
+8. a replay of every store
