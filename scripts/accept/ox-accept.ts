@@ -44,7 +44,7 @@
 //                          CROSS-HOST race (a relaying host of another key) → the same, the relaying host's overlay
 //                          holding the accepted swap when it answers; the validator's host stopped → unreachable at once
 //   five swaps in a row  → (0.18.0) on a host of its own: one taker, five swaps on one pool, each funded by the previous
-//                          swap's change; each leg's funding BEEF from the page's own code (skein-amm 0.46.1
+//                          swap's change; each leg's funding BEEF from the page's own code (skein-amm 0.46.2
 //                          `fundingBeef`, the 0.45.0 function): what the topic admitted by txid; every request and reply BEEF ≤ CHAIN_BOUND;
 //                          (0.18.2) then a request naming by txid a transaction the validator does not hold → refused
 //                          bad_transaction at once (no hang, no lock), and the next request on the pool accepted
@@ -84,7 +84,7 @@ const { keyWallet } = await skein<typeof import("@dcasegr/skein/dist/wallet.js")
 const { FakeArcade } = await skein<typeof import("@dcasegr/skein/dist/host/fake-arcade.js")>("src/host/fake-arcade.ts");
 /** 0.18.0: the largest request or reply BEEF the five-swap chain may carry (bytes): a swap alone is ~12.6 KB here. */
 const CHAIN_BOUND = 16_000;
-/** The page's own leg code (skein-amm 0.46.1's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
+/** The page's own leg code (skein-amm 0.46.2's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
 async function ammClient(): Promise<{ PoolTemplate: any; fundingBeef: any; topicAdmitted: any; sdk4: any } | undefined> {
   try {
     const entry = fileURLToPath(import.meta.resolve("@dcasegr/amm-client"));
@@ -830,7 +830,7 @@ try {
         // building each leg's funding BEEF (`fundingBeef` over a wallet-like BEEF that grows with every swap, with
         // `topicAdmitted`): every request BEEF (the host's `requestBeef`) and every reply `beef` under CHAIN_BOUND.
         const amm = await ammClient();
-        check(!!amm, `chain: @dcasegr/amm-client (0.46.1) loads for the page's own leg code (${amm ? "ok" : "install its tarball: npm install --no-save --legacy-peer-deps <engine.tgz> <client.tgz>"})`);
+        check(!!amm, `chain: @dcasegr/amm-client (0.46.2) loads for the page's own leg code (${amm ? "ok" : "install its tarball: npm install --no-save --legacy-peer-deps <engine.tgz> <client.tgz>"})`);
         if (amm) {
           const { requestBeef } = await import("../../host/relay.ts");
           const assetHex = Buffer.from(ftx.get("token_deploy")!.hash() as number[]).toString("hex");
