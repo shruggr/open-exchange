@@ -44,7 +44,7 @@
 //                          CROSS-HOST race (a relaying host of another key) → the same, the relaying host's overlay
 //                          holding the accepted swap when it answers; the validator's host stopped → unreachable at once
 //   five swaps in a row  → (0.18.0) on a host of its own: one taker, five swaps on one pool, each funded by the previous
-//                          swap's change; each leg's funding BEEF from the page's own code (skein-amm 0.47.0
+//                          swap's change; each leg's funding BEEF from the page's own code (skein-amm 0.48.0
 //                          `fundingBeef`, the 0.45.0 function): what the topic admitted by txid; every request and reply BEEF ≤ CHAIN_BOUND;
 //                          (0.18.2) then a request naming by txid a transaction the validator does not hold → refused
 //                          bad_transaction at once (no hang, no lock), and the next request on the pool accepted
@@ -84,7 +84,7 @@ const { keyWallet } = await skein<typeof import("@dcasegr/skein/dist/wallet.js")
 const { FakeArcade } = await skein<typeof import("@dcasegr/skein/dist/host/fake-arcade.js")>("src/host/fake-arcade.ts");
 /** 0.18.0: the largest request or reply BEEF the five-swap chain may carry (bytes): a swap alone is ~12.6 KB here. */
 const CHAIN_BOUND = 16_000;
-/** The page's own leg code (skein-amm 0.47.0's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
+/** The page's own leg code (skein-amm 0.48.0's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
 async function ammClient(): Promise<{ PoolTemplate: any; fundingBeef: any; topicAdmitted: any; sdk4: any } | undefined> {
   try {
     const entry = fileURLToPath(import.meta.resolve("@dcasegr/amm-client"));
@@ -502,17 +502,21 @@ try {
   check(g1s.status === 200 && /application\/json/.test(g1s.headers.get("content-type") ?? "") && Array.isArray(await g1s.json().catch(() => undefined)), `GET /amm/pools asked for an event stream: the plain read (0.13.0, D7: the host-wide stream is gone; ${g1s.headers.get("content-type")})`);
 
   // ------------------------------------------------ stats over the listed pools (0.13.1): P1 (validator not beating)
-  // and P2 (commission below the market's minimum) are in the instance's own /stats row, not in the host's answer.
+  // and P2 (commission below the market's minimum) are not in the host's answer. 0.20.0 (skein-amm 0.48.0 D4): the
+  // instance's own /stats row carries only what the host does not recompute — no TVL, pool count or changes.
   const ownA = await (x!.pools as unknown as { instanceStats(h: string): Promise<Record<string, unknown>> }).instanceStats(A);
-  check(ownA.pools === 3 && ownA.tvlSats === 3 * 50_001 && ownA.lastTradeAt === null, `A's instance /stats, unfiltered: 3 pools, tvlSats ${String(ownA.tvlSats)} (${JSON.stringify(ownA)})`);
+  check(JSON.stringify(Object.keys(ownA)) === JSON.stringify(["tokenId", "lastTradePrice", "volume24hSats", "volume24hTokens", "buys24h", "sells24h", "lastTradeAt", "volumeSats", "volumeTokens", "trades"]) && ownA.lastTradeAt === null,
+    `A's instance /stats (0.20.0): the last fill, the volumes and the counts only (${JSON.stringify(ownA)})`);
   const stA0 = await getJson(`/@${A}/amm/stats`) as Record<string, unknown> | undefined;
   const midA0 = priceOf([poolState(row0 as Record<string, unknown>)])?.mid;
   const pA0 = stA0?.price as { sats?: number; tokens?: number } | null | undefined;
+  check(JSON.stringify(Object.keys(stA0 ?? {})) === JSON.stringify(["tokenId", "lastTradePrice", "change1h", "change24h", "volume24hSats", "volume24hTokens", "buys24h", "sells24h", "lastTradeAt", "tvlSats", "tvlTokens", "pools", "volumeSats", "volumeTokens", "trades", "price", "buyPrice", "sellPrice"]),
+    `GET /@<A>/amm/stats (the host's): its fields and their order as 0.19.0's (${JSON.stringify(Object.keys(stA0 ?? {}))})`);
   check(stA0?.pools === 1 && stA0.tvlSats === 50_001 && stA0.tvlTokens === 7_000_000 && !!midA0 && pA0?.sats === Number(midA0.sats) && pA0?.tokens === Number(midA0.tokens) && !!stA0.buyPrice && !!stA0.sellPrice && stA0.lastTradePrice === null && stA0.change1h === null && stA0.change24h === null,
     `GET /@<A>/amm/stats (the host's): only P0 counted — pools 1, tvl 50001 sats / 7000000; price = priceOf([P0]).mid, buy and sell set; no trade, no pools an hour ago: lastTradePrice and the changes null (${JSON.stringify(stA0)})`);
   // mergeStats and changeBps alone: the price over the LISTED pools; none listed, no price; the change from a past mid.
   const fp = (sats: number, tokens: number) => ({ poolId: "x_0", outpoint: "x_0", bsvReserve: sats, tokenReserve: tokens, liquidityFeeBps: 30, validationFeeBps: 5, commissionBps: 25, validatorIdentityKey: SHARED, validatorPeerId: "p", swaps: 0 });
-  const own = { tokenId: A, lastTradePrice: null, lastTradeAt: null, tvlSats: 1900, tvlTokens: 12, pools: 3 };
+  const own = { tokenId: A, lastTradePrice: null, lastTradeAt: null };
   const two = [fp(3_000_000, 50_000_000), fp(7_000_000, 60_000_000)];
   const m1 = mergeStats(own, two, null, null);
   const want1 = priceOf(two.map((p) => poolState(p)))!;
@@ -837,7 +841,7 @@ try {
         // building each leg's funding BEEF (`fundingBeef` over a wallet-like BEEF that grows with every swap, with
         // `topicAdmitted`): every request BEEF (the host's `requestBeef`) and every reply `beef` under CHAIN_BOUND.
         const amm = await ammClient();
-        check(!!amm, `chain: @dcasegr/amm-client (0.47.0) loads for the page's own leg code (${amm ? "ok" : "install it with its peers: in a directory of its own, npm install --legacy-peer-deps <engine.tgz> <client.tgz> @1sat/templates@0.1.1 @bsv/sdk@^4 @bsv/color-permission-module@npm:@bopen-io/color-permission-module@0.2.2, then link node_modules/@dcasegr/amm-client to it (the host's own @bsv/sdk 2 and @1sat/templates 0.0.x do not serve it)"})`);
+        check(!!amm, `chain: @dcasegr/amm-client (0.48.0) loads for the page's own leg code (${amm ? "ok" : "install it with its peers: in a directory of its own, npm install --legacy-peer-deps <engine.tgz> <client.tgz> @1sat/templates@0.1.1 @bsv/sdk@^4 @bsv/color-permission-module@npm:@bopen-io/color-permission-module@0.2.2, then link node_modules/@dcasegr/amm-client to it (the host's own @bsv/sdk 2 and @1sat/templates 0.0.x do not serve it)"})`);
         if (amm) {
           const { requestBeef } = await import("../../host/relay.ts");
           const assetHex = Buffer.from(ftx.get("token_deploy")!.hash() as number[]).toString("hex");

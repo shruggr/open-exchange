@@ -14,7 +14,8 @@
 //       validator beating on tm_color_<tokenId>-live now (identity hex, peer ID the beat's `from`, and
 //       0.14.0 `minLegSats` = the beat body's `terms.minLegSats` when its terms carry one), whatever its pools.
 //   GET <origin>/amm/pools      [{tokenId, …the row above}]   every enabled token instance's, one array.
-//   GET /@<tokenId>/amm/stats   the instance's own `/stats` row with `tvlSats`, `tvlTokens` and `pools` the sums and
+//   GET /@<tokenId>/amm/stats   the instance's own `/stats` row (0.20.0, skein-amm 0.48.0 D4: the last fill, the volumes
+//                                and the counts only) with `tvlSats`, `tvlTokens` and `pools` the sums and
 //                                the count over the pools GET /@<id>/amm/pools lists; 0.14.0: `price` = the engine's
 //                                `priceOf(those pools).mid`, `buyPrice` / `sellPrice` its buy and sell (null with no
 //                                pool); `change1h` / `change24h` = the change in bps (truncated toward zero) from
@@ -115,18 +116,25 @@ const lt = (a: Price, b: Price) => a.sats * b.tokens < b.sats * a.tokens;
  * and `pools` the sums and the count over `pools` (the listed pools), `price` / `buyPrice` / `sellPrice` =
  * `priceOf(pools)`'s mid / buy / sell (null with none), and `change1h` / `change24h` from the mids `then1h` /
  * `then24h` (the pools listed an hour and a day ago, `/pools/at`) to `price` (null when either is none).
+ * 0.20.0 (skein-amm 0.48.0 D4): the instance's row carries only what the host does not recompute (the last
+ * fill, the volumes, the counts); the answer keeps its fields and their order (the instance's first, the
+ * host's own in the places the instance's row had them).
  */
 export function mergeStats(row: Rec, pools: PoolRow[], then1h: Price | null, then24h: Price | null): Rec {
   let sats = 0n, tokens = 0n;
   for (const p of pools) { sats += big(p.bsvReserve); tokens += big(p.tokenReserve); }
   const now = priceOf(pools.map((p) => poolState(p as unknown as Rec)));
   const price = now?.mid ?? null;
+  const { tokenId, lastTradePrice, volume24hSats, volume24hTokens, buys24h, sells24h, lastTradeAt, volumeSats, volumeTokens, trades, ...rest } = row;
   return {
-    ...row,
-    price, buyPrice: now?.buy ?? null, sellPrice: now?.sell ?? null,
+    tokenId, lastTradePrice,
     change1h: price && then1h ? changeBps(then1h, price) : null,
     change24h: price && then24h ? changeBps(then24h, price) : null,
+    volume24hSats, volume24hTokens, buys24h, sells24h, lastTradeAt,
     tvlSats: sats, tvlTokens: tokens, pools: pools.length,
+    volumeSats, volumeTokens, trades,
+    ...rest,
+    price, buyPrice: now?.buy ?? null, sellPrice: now?.sell ?? null,
   };
 }
 
