@@ -60,7 +60,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer as httpServer, type ServerResponse } from "node:http";
 import { createServer } from "node:net";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -696,6 +696,166 @@ try {
       await y?.stop().catch(() => {});
       if (ROCKS) await sleep(1500);
       if (!process.env.KEEP) rmSync(home2, { recursive: true, force: true });
+    }
+  }
+
+  // ------------------------------------------------ reindex at start (0.20.1; skein-overlay 0.23.0, skein-amm 0.48.1 D5–D7)
+  // B indexed under the OLD shape: a host of its own whose token image is skein-amm v0.47.0 (a copy of this
+  // package's image/ with only the token app's tarball changed), B's deploy, pool and two swaps admitted there.
+  // Then the same home started with this package's images: the host installs skein-amm 0.48.1 into B in place and,
+  // its lookupVersion 1 greater than 0.47.0's none, sends root's reindex for ls_amm_<B> and ls_color_<B>. A
+  // second reindex of ls_amm_<B> is sent the moment the host says the reindex started; the LP's Close after the switch.
+  // Then B's pool reads answer what the main host's FRESH 0.48.1 index answers for the same five transactions (times
+  // aside: a re-run stamps its own step's time, as a fresh index stamps its own); the Close is in them; the second
+  // reindex was refused (root's answer in B's log, one run recorded); B's amm/terms and wallet heads untouched.
+  {
+    const strip = (v: unknown): unknown => Array.isArray(v) ? v.map(strip) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => !/(^at$|At$|^since$|^next$)/.test(k)).map(([k, y]) => [k, strip(y)])) : v;
+    const reads = [
+      `/@${B}/amm/pools/history?from=0`, `/@${B}/amm/trades`, `/@${B}/amm/trades?txid=${ftx.get("swap_bsv_in")!.id("hex")}`,
+      `/@${B}/amm/positions?pool=${poolB}`, `/@${B}/amm/stats`, `/@${B}/amm/color/${B}/holders`, `/@${B}/amm/fees/validator?id=${SHARED}`,
+    ];
+    const fresh = new Map<string, string>();
+    for (const q of reads) fresh.set(q, JSON.stringify(strip(await getJson(q))));
+    check([...fresh.values()].every((v) => v !== "null" && v !== undefined), `reindex: the main host's fresh 0.48.1 index answers every read compared (${reads.length})`);
+    // The old images: this package's image/ with the token app at skein-amm v0.47.0 (swap's ../../apps/swap a link to the package's).
+    const oldRoot = mkdtempSync(join(tmpdir(), "ox-accept-images-047-"));
+    cpSync(join(OX_ROOT, "image"), join(oldRoot, "image"), { recursive: true });
+    mkdirSync(join(oldRoot, "apps"), { recursive: true });
+    symlinkSync(join(OX_ROOT, "apps", "swap"), join(oldRoot, "apps", "swap"));
+    const tokenApps = join(oldRoot, "image", "token", "etc", "apps.json");
+    const ta = JSON.parse(readFileSync(tokenApps, "utf8")) as { install: Array<string | { url: string; hash: string }> };
+    ta.install = ta.install.map((e) => typeof e === "object" && /skein-amm/.test(e.url) ? { url: "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.47.0.tar.gz", hash: "f41cb56f74cf90e268ebad3dffe9014a3110388f" } : e);
+    writeFileSync(tokenApps, `${JSON.stringify(ta, null, 2)}\n`);
+    const oldImages = join(oldRoot, "image");
+    const home4 = mkdtempSync(join(tmpdir(), "ox-accept-reindex-"));
+    writeFileSync(join(home4, "key"), `${shared.toHex()}\n`, { mode: 0o600 });
+    const port4 = await freePort(), hostPort4 = await freePort(), p2pPort4 = await freePort();
+    writeFileSync(join(home4, "host.env"), [
+      `SKEIN_KEY_FILE=${join(home4, "key")}`,
+      ...(ROCKS ? [`SKEIN_STORE_ROCKSDB=${join(home4, "store-rocksdb")}`] : FILE ? [] : [`SKEIN_STORE_SQLITE=${join(home4, "store.sqlite")}`]),
+      `SKEIN_ROOT_INSTANCE=${SWAP}`, "SKEIN_NETWORK=regtest", `SKEIN_ROUTER_PORT=${port4}`, `SKEIN_HOST_PORT=${hostPort4}`, `SKEIN_HEADERS_URL=${feedUrl}`,
+      `SKEIN_ARC_URL=${arcade.url}`, "SKEIN_ARC_TOKEN=t", `SKEIN_ARC_EVENTS_URL=${arcade.eventsUrl}`, `SKEIN_LIBP2P_LISTEN=/ip4/127.0.0.1/tcp/${p2pPort4}`,
+      ...(kernel ? [`SKEIN_KERNEL_BIN=${kernel}`] : []), "",
+    ].join("\n"));
+    const lines4: string[] = [];
+    const env4: Env = { vars: { HOME: process.env.HOME, PATH: process.env.PATH, SKEIN_HOME: home4 }, out: (l) => { lines4.push(l); if (process.env.VERBOSE || process.env.VERBOSE_REINDEX) process.stdout.write(`  4| ${l}\n`); }, err: (l) => { lines4.push(`ERR ${l}`); process.stdout.write(`  4! ${l}\n`); } };
+    const R4 = `http://127.0.0.1:${port4}`;
+    const get4 = async (path: string) => { const r = await fetch(`${R4}${path}`); return r.status === 200 ? await r.json() as unknown : undefined; };
+    const submit4 = async (n: string) => (await fetch(`${R4}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmB]) }, body: Uint8Array.from(ftx.get(n)!.toBEEF()) })).status;
+    const ammB = `ls_amm_${B}`, colorB = `ls_color_${B}`;
+    let z: Running | undefined;
+    try {
+      const fr4 = await firstRun(sk, env4);
+      check(!fr4.failed, `reindex host: the first run (${fr4.made.join("; ")})`);
+      if (ROCKS) await sleep(1500);
+      // Phase 1: the token instances from the OLD images (and the host comparing against them: nothing to update).
+      const old = settings(sk, env4);
+      old.vars.SKEIN_IMAGES_DIR = oldImages;
+      z = await startExchange(sk, old, { imagesDir: oldImages });
+      await z.exchange.idle();
+      await until("the reindex host's chain at the fixtures' roots", async () => { const t = await (await z!.host.router.hydrate(SWAP)).kernel.chainTip(); return t && t.height >= topH ? t : undefined; });
+      // Defaults first, so B is born with terms (amm/terms: a head the reindex must leave as it is).
+      await z.exchange.rootMessage(SWAP, "amm/admin", { fn: "defaults", args: { terms: { lpFeeBps: 30, validatorFeeBps: 5, commissionBps: 25 } } });
+      await until("the reindex host's defaults", async () => ((await get4(`/@${SWAP}/amm/defaults`)) as { terms?: unknown } | undefined)?.terms ? true : undefined);
+      await z.exchange.rootMessage(SWAP, "amm/admin", { fn: "enable", args: { tokenId: B, beef: Uint8Array.from(ftx.get("token_deploy")!.toAtomicBEEF()) } });
+      check(!!(await until("/@B/amm/token on the reindex host", async () => (await fetch(`${R4}/@${B}/amm/token`)).status === 200 ? true : undefined, 60_000)), "reindex host: B enabled from the old image");
+      await z.exchange.idle();
+      const kB = (await z.host.router.hydrate(B)).kernel;
+      const appOld = await kB.store.get(await kB.call("head", "amm/app") as never) as unknown as { version?: string; lookupVersion?: number };
+      check(appOld.version === "0.47.0" && appOld.lookupVersion === undefined, `…B runs skein-amm ${appOld.version} (no lookupVersion: the old shape)`);
+      for (const n of ["pool_deploy", "swap_bsv_in", "swap_tokens_in"]) {
+        const st = await submit4(n);
+        const ok = await until(`reindex host: ${n} admitted`, async () => ((await get4(`/@${B}/amm/spends?outpoint=${ftx.get(n)!.inputs[0]!.sourceTXID}.${ftx.get(n)!.inputs[0]!.sourceOutputIndex}`)) as { spentBy?: string } | undefined)?.spentBy === ftx.get(n)!.id("hex") ? true : undefined, 30_000);
+        check(st === 200 && !!ok, `…${n} admitted under 0.47.0 (${st})`);
+      }
+      await until("B's three admitted transactions settled", async () => { await kB.idle(); return true; });
+      const headOf = async (k: typeof kB, h: string) => String(await k.call("head", h) ?? "");
+      const wHeads = async (k: typeof kB) => { const out: string[] = []; for (const h of ["amm/terms", "amm/market", "wallet/state"]) out.push(`${h}=${await headOf(k, h)}`); return out.join(" "); };
+      const keptBefore = await wHeads(kB);
+      await z.stop();
+      z = undefined;
+      if (ROCKS) await sleep(1500);
+
+      // Phase 2: this package's images. The host installs 0.48.1 into B and reindexes its two lookups.
+      const t0 = Date.now();
+      z = await startExchange(sk, settings(sk, env4));
+      let started = false;
+      for (const end = Date.now() + 180_000; !started && Date.now() < end; await sleep(10)) started = lines4.some((l) => l.includes(`${B}: reindex ${ammB} started`));
+      // Beside it, at once: a second reindex of the same service (refused: in progress).
+      // NOT here (a blocker, plans/reindex-2026-11-07.md REPORT): a swap admitted DURING the reindex. The live hooks are
+      // 0.48.1's and the live index is 0.47.0's shape: amm-lookup's `spent` fails BadIndex on its old records, the
+      // admission step errors and the transaction stays pending (resubmissions 503). The Close goes in after the switch.
+      const entriesBefore = await (async () => { const st = sk.stores.openStoreFile(sk.indexStore.storeSpec(z!.db.get(B)!), { readOnly: true }); try { let n = 0; for await (const _e of st.log.entries(0)) n++; return n; } finally { st.close(); } })();
+      await z.exchange.rootMessage(B, "amm/reindex", { fn: "reindex", args: { service: ammB } });
+      const kB2 = (await z.host.router.hydrate(B)).kernel;
+      const rec = async () => { const c = await kB2.call("head", "amm/reindex"); return c ? await kB2.store.get(c as never) as unknown as { running?: Record<string, { thread?: unknown }>; last?: Record<string, Record<string, unknown>> } : undefined; };
+      await z.exchange.reindexed();
+      const closeSent = Date.now();
+      let closeStatus = await submit4("close"), polls = 0;
+      // BRC-22's 503 (undecided within the host's bound): resubmitted, as a client polls the same flow.
+      while (closeStatus === 503 && polls++ < 60) { await sleep(500); closeStatus = await submit4("close"); }
+      // The refusal: the engine's answer to root `{fn: "reindex", error: {code: "bad-args", message: "reindex in progress"}}`
+      // (root is the instance's own key here: the answer comes back into the instance as a message of its log).
+      const refusal = await (async () => {
+        const st = sk.stores.openStoreFile(sk.indexStore.storeSpec(z!.db.get(B)!), { readOnly: true });
+        try {
+          const seen = new Set<string>();
+          const look = async (v: unknown, depth: number): Promise<string | undefined> => {
+            if (depth > 6 || v == null) return undefined;
+            if (v instanceof Uint8Array) { try { return await look(sk.cid.decode(v), depth + 1); } catch { return undefined; } }
+            if (typeof v !== "object") return undefined;
+            const o = v as Record<string, unknown> & { multihash?: unknown; code?: number };
+            if (o.multihash && typeof (o as { toString(): string }).toString === "function" && "code" in o) {
+              const k = String(o);
+              if (seen.has(k)) return undefined;
+              seen.add(k);
+              return await look(await st.get(o as never).catch(() => undefined), depth + 1);
+            }
+            if (Array.isArray(v)) { for (const x of v) { const r = await look(x, depth + 1); if (r) return r; } return undefined; }
+            const err = o.error as { code?: string; message?: string } | undefined;
+            if (o.fn === "reindex" && err && typeof err.message === "string") return `${err.code}: ${err.message}`;
+            for (const x of Object.values(o)) { const r = await look(x, depth + 1); if (r) return r; }
+            return undefined;
+          };
+          let n = 0;
+          for await (const { entry } of st.log.entries(0)) { if (n++ < entriesBefore) continue; const r = await look(entry, 0); if (r) return r; }
+          return undefined;
+        } finally { st.close(); }
+      })();
+      const tDone = Date.now();
+      check(!!started && lines4.some((l) => l.includes(`${B}: amm updated to 0.48.1 (from 0.47.0`)), `the restart on this package's images: B's token app installed in place, 0.47.0 → 0.48.1 (${lines4.find((l) => l.includes(`${B}: amm updated`))?.replace(/^\[open-exchange\] /, "")})`);
+      const doneAmm = lines4.find((l) => l.includes(`${B}: reindex ${ammB} done`)), doneColor = lines4.find((l) => l.includes(`${B}: reindex ${colorB} done`));
+      check(!!doneAmm && !!doneColor && lines4.some((l) => l.includes(`${B}: reindex ${colorB} started (lookupVersion 0 → 1)`)), `…root's reindex of ls_amm_<B> and ls_color_<B> (lookupVersion 0 → 1), both done: ${doneAmm?.replace(/^.*reindex /, "")} · ${doneColor?.replace(/^.*reindex /, "")} (${tDone - t0} ms from the start)`);
+      check(!lines4.some((l) => /reindex .* error/.test(l)) && !lines4.some((l) => l.includes(`${DISCOVERY}: 1color updated`)), "…no reindex error; discovery (born on this package's image) left as it is");
+      const r2 = await rec();
+      const last = r2?.last?.[ammB];
+      check(refusal === "bad-args: reindex in progress" && !r2?.running?.[ammB] && Number(last?.steps) === Number(last?.transactions) + 2, `…the second reindex sent while it ran was refused (root answered ${refusal ?? "nothing found"}); one run recorded (${JSON.stringify(last)})`);
+      check(closeStatus === 200, `…the Close submitted after the switch (${closeSent - t0} ms after the restart: ${closeStatus}${polls ? `, after ${polls} resubmission(s) of a 503` : ""})`);
+      await until("the Close in B's history", async () => ((await get4(`/@${B}/amm/pools/history?from=0`)) as { events?: Array<{ kind?: string }> } | undefined)?.events?.some((e) => e.kind === "close") ? true : undefined, 30_000);
+      const closeEvent = ((await get4(`/@${B}/amm/pools/history?from=0`)) as { events?: Array<{ kind?: string; at?: number }> } | undefined)?.events?.find((e) => e.kind === "close");
+      const during = closeEvent && last ? Number(closeEvent.at) <= Number(last.to) : false;
+      check(!!closeEvent && !during, `…the Close is in the switched index, written by the live hooks after the switch (admitted at ${String(closeEvent?.at)}, the switch at ${String(last?.to)})`);
+      let same = 0;
+      for (const q of reads) {
+        const got = JSON.stringify(strip(await get4(q)));
+        if (got === fresh.get(q)) same++; else process.stdout.write(`  reindexed ${q}:\n    ${got.slice(0, 400)}\n  fresh:\n    ${fresh.get(q)?.slice(0, 400)}\n`);
+      }
+      check(same === reads.length, `…B's reads after the reindex answer what the main host's fresh index answers, times aside (${same}/${reads.length}: history, trades, a trade by txid, positions, stats, holders, validator fees)`);
+      check(await wHeads(kB2) === keptBefore, `…B's amm/terms and wallet heads untouched (${keptBefore.replace(/=\S{40,}/g, "=<cid>").slice(0, 160)})`);
+      check(JSON.stringify(await get4(`/@${SWAP}/amm/wallet`)) === JSON.stringify(await get4(`/@${SWAP}/amm/wallet`)) && !!(await get4(`/@${SWAP}/amm/wallet`)), "…swap's wallet read as before (the reindex is the token instance's lookups only)");
+      // A restart now: nothing to update, nothing reindexed again.
+      await z.stop();
+      z = undefined;
+      if (ROCKS) await sleep(1500);
+      const n4 = lines4.length;
+      z = await startExchange(sk, settings(sk, env4));
+      await z.exchange.idle();
+      await z.exchange.reindexed();
+      check(!lines4.slice(n4).some((l) => / reindex | updated to /.test(l)), "a restart after it: nothing updated, nothing reindexed");
+    } finally {
+      await z?.stop().catch(() => {});
+      if (ROCKS) await sleep(1500);
+      if (!process.env.KEEP) { rmSync(home4, { recursive: true, force: true }); rmSync(oldRoot, { recursive: true, force: true }); }
     }
   }
 

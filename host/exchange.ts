@@ -25,8 +25,20 @@
 // follow the package on `npm install open-exchange@<v>` + a restart. Then the reconcile re-grants
 // amm.admin to swap's claimant if a crash came between the claim and the grant.
 //
+// At start (0.20.1), after the reconcile: every token instance and discovery (enabled) gets its image's packaged
+// apps in place — each {url, hash} entry of image/<token|discovery>/etc/apps.json, fetched once (skein's
+// appTarball, checked against its tree id) when the instance's installed app of that name is not that tree — when
+// the packaged version differs from the installed one (its head <app>/app), as root (the host's key), as the swap
+// app's; and when the packaged `lookupVersion` is greater than the installed one (none: 0), root's
+// {fn: "reindex", args: {service}} into <app>/reindex for each of the instance's lookup services (a token's
+// ls_amm_<id> and ls_color_<id>, discovery's ls_color: skein-overlay 0.23.0 derives the index again from the
+// topic's admitted history in place). The reindex is logged: started, then done (its transactions, steps, time)
+// or error, read from the head <app>/reindex (`last`); the reactions do not wait for it.
+//
 // Each reaction is idempotent and logged; they run one at a time, in the order handed over.
-import { SWAP_APP_DIR, swapAppVersion, type Router, type Skein } from "./skein.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { IMAGES_DIR, SWAP_APP_DIR, swapAppVersion, type Router, type Skein } from "./skein.ts";
 
 export const SWAP = "swap";
 export const DISCOVERY = "discovery";
@@ -55,11 +67,26 @@ export interface ExchangeOptions {
   log(line: string): void;
   /** The swap app installed into swap at start when its version differs (default: the package's apps/swap; tests'). */
   swapAppDir?: string;
+  /** 0.20.1: the images whose packaged apps the token instances and discovery get at start (default: the package's image/; tests'). */
+  imagesDir?: string;
 }
+
+/** An image's app by release tarball (etc/apps.json `install`: `{url, hash}`, `hash` its tree's git id). */
+type ImageEntry = { url: string; hash: string };
+/** A packaged app as fetched: its name, version, lookupVersion (none: 0) and its tree as an install reads it. */
+type Packaged = { app: string; version: string; lookupVersion: number; tree: Awaited<ReturnType<Skein["install"]["readApp"]>> };
+/** An installed app (its head <app>/app): its version, lookupVersion (none: 0) and tree id (hex). */
+type Installed = { version?: string; lookupVersion: number; tree?: string };
+const lookupVersionOf = (m: unknown): number => { const v = (m as { lookupVersion?: unknown } | undefined)?.lookupVersion; return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0; };
 
 export class Exchange {
   private readonly o: ExchangeOptions;
   private chain: Promise<void> = Promise.resolve();
+  /** 0.20.1: the packaged apps fetched this run, by tree id (once each). */
+  private readonly fetched = new Map<string, Promise<Packaged>>();
+  /** 0.20.1: the reindexes being watched (until their `last` changes); cleared by `stop`. */
+  private readonly watching = new Set<Promise<void>>();
+  private stopped = false;
 
   constructor(o: ExchangeOptions) { this.o = o; }
 
@@ -98,6 +125,12 @@ export class Exchange {
 
   /** Until every queued reaction has run. */
   async idle(): Promise<void> { let c; do { c = this.chain; await c; } while (c !== this.chain); }
+
+  /** 0.20.1: until every reindex this run started has come to an end (done or error, as its log line says). */
+  async reindexed(): Promise<void> { while (this.watching.size) await Promise.all([...this.watching]); }
+
+  /** Stop watching reindexes (the host is stopping). */
+  stopWatching(): void { this.stopped = true; }
 
   // ---------------------------------------------------------------- the reactions
 
@@ -208,20 +241,150 @@ export class Exchange {
         this.say(`swap: WARNING: the package's pages are ${want}, ${SWAP} runs ${have ?? "none"}, and the host's key is not root on ${SWAP} (an install made by open-exchange 0.3.0–0.4.5): not updated`);
         return;
       }
-      const sk = this.o.sk;
-      const tree = await sk.install.readApp(dir);
-      const st = sk.stores.openStoreFile(sk.indexStore.storeSpec(row), { readOnly: true });
-      let plan;
-      try { plan = await sk.admin.planInstallApp(tree, await sk.install.instanceView(st as never), { modules: sk.boot.wasmDirObjects(sk.boot.WASM_DIR) }); } finally { st.close(); }
-      for (const m of plan.messages) await this.rootMessage(SWAP, m.box, m.body as Rec);
-      for (const end = Date.now() + 120_000; ;) {
-        await this.r.loaded.get(SWAP)?.kernel.idle().catch(() => {});
-        if (await this.swapVersion() === want) break;
-        if (Date.now() > end) throw new Error(`swap: amm/app is not ${want} 120 s after the install (${plan.messages.length} messages sent; swap's log says why)`);
-        await new Promise((r) => setTimeout(r, 200));
-      }
-      this.say(`swap: pages updated to ${want} (from ${have ?? "none"}; ${plan.messages.length} messages as root)`);
+      const n = await this.installTree(SWAP, SWAP_APP, await this.o.sk.install.readApp(dir), want);
+      this.say(`swap: pages updated to ${want} (from ${have ?? "none"}; ${n} messages as root)`);
     });
+  }
+
+  /**
+   * An app's tree into an instance in place: planned as `skein install` plans (planInstallApp: objects, the head
+   * <app>/app, dispatch, start) over the instance's store, each message sent as root's (the host's key); until the
+   * head <app>/app names `want` (120 s). → the messages sent.
+   */
+  private async installTree(handle: string, app: string, tree: Packaged["tree"], want: string): Promise<number> {
+    const sk = this.o.sk;
+    const row = this.r.o.db.get(handle)!;
+    const st = sk.stores.openStoreFile(sk.indexStore.storeSpec(row), { readOnly: true });
+    let plan;
+    try { plan = await sk.admin.planInstallApp(tree, await sk.install.instanceView(st as never), { modules: sk.boot.wasmDirObjects(sk.boot.WASM_DIR) }); } finally { st.close(); }
+    for (const m of plan.messages) await this.rootMessage(handle, m.box, m.body as Rec);
+    for (const end = Date.now() + 120_000; ;) {
+      await this.r.loaded.get(handle)?.kernel.idle().catch(() => {});
+      if ((await this.installedApp(handle, app)).version === want) break;
+      if (Date.now() > end) throw new Error(`${handle}: ${app}/app is not ${want} 120 s after the install (${plan.messages.length} messages sent; its log says why)`);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return plan.messages.length;
+  }
+
+  // ---------------------------------------------------------------- the managed instances' apps (0.20.1)
+
+  /** An installed app of an instance (its head <app>/app's record). */
+  private async installedApp(handle: string, app: string): Promise<Installed> {
+    const l = await this.r.hydrate(handle);
+    const c = await l.kernel.call("head", `${app}/app`);
+    if (!c) return { lookupVersion: 0 };
+    const rec = await l.kernel.store.get(c as never).catch(() => undefined) as { version?: string; lookupVersion?: unknown; tree?: { multihash?: { digest?: Uint8Array } } } | undefined;
+    const d = rec?.tree?.multihash?.digest;
+    return { version: rec?.version, lookupVersion: lookupVersionOf(rec), tree: d ? Buffer.from(d).toString("hex") : undefined };
+  }
+
+  /** The installed apps' tree ids (hex) on an instance: its heads <app>/app. */
+  private async installedTrees(handle: string): Promise<Set<string>> {
+    const sk = this.o.sk;
+    const st = sk.stores.openStoreFile(sk.indexStore.storeSpec(this.r.o.db.get(handle)!), { readOnly: true });
+    try {
+      const v = await sk.install.instanceView(st as never);
+      const out = new Set<string>();
+      for (const h of v.heads) {
+        if (!h.name.endsWith("/app") || h.name.indexOf("/") !== h.name.length - 4) continue;
+        const rec = await v.store.get(h.root as never).catch(() => undefined) as { kind?: string; tree?: { multihash?: { digest?: Uint8Array } } } | undefined;
+        const d = rec?.kind === "app" ? rec.tree?.multihash?.digest : undefined;
+        if (d) out.add(Buffer.from(d).toString("hex"));
+      }
+      return out;
+    } finally { st.close(); }
+  }
+
+  /** An image's apps by tarball (its etc/apps.json `install`, the `{url, hash}` entries, in order). */
+  private imageEntries(image: string): ImageEntry[] {
+    const j = JSON.parse(readFileSync(join(this.o.imagesDir ?? IMAGES_DIR, image, "etc", "apps.json"), "utf8")) as { install?: unknown[] };
+    return (j.install ?? []).filter((a): a is ImageEntry => !!a && typeof a === "object" && typeof (a as ImageEntry).url === "string" && typeof (a as ImageEntry).hash === "string");
+  }
+
+  /** A packaged app by its tarball, fetched once this run (skein's appTarball: checked against its tree id) and read as an install reads a stored app. */
+  private packagedApp(e: ImageEntry): Promise<Packaged> {
+    let p = this.fetched.get(e.hash);
+    if (!p) {
+      p = (async () => {
+        const sk = this.o.sk;
+        const mem = new sk.boot.MemBlocks();
+        const root = await sk.boot.appTarball(e, mem, mem);
+        const t = await sk.install.readStoredApp(mem as never, root);
+        const m = t.checked.manifest;
+        return { app: m.name, version: m.version, lookupVersion: lookupVersionOf(m), tree: { ...t, records: [...mem.map.values()] } };
+      })();
+      this.fetched.set(e.hash, p);
+      p.catch(() => this.fetched.delete(e.hash));
+    }
+    return p;
+  }
+
+  /**
+   * At start, after the reconcile: each enabled token instance (image `token`, its lookups ls_amm_<id> and
+   * ls_color_<id>) and discovery (image `discovery`, ls_color) gets its image's packaged apps when their versions
+   * differ from the installed ones, and its lookups reindexed when a packaged `lookupVersion` is greater than the
+   * installed one. Queued; logged; the reindexes are not waited for.
+   */
+  updateInstances(): Promise<void> {
+    return this.enqueue("instances", async () => {
+      for (const row of this.r.o.db.list("enabled")) {
+        const h = row.handle;
+        const image = TOKEN_ID.test(h) ? TOKEN_IMAGE : h === DISCOVERY ? DISCOVERY : undefined;
+        if (!image) continue;
+        const services = (image === TOKEN_IMAGE ? tokenTopics(h) : DISCOVERY_TOPICS).filter((t) => t.startsWith("ls_"));
+        await this.updateInstance(h, image, services).catch((e) => this.say(`${h}: its apps not updated: ${(e as Error).message}`));
+      }
+    });
+  }
+
+  private async updateInstance(h: string, image: string, services: string[]): Promise<void> {
+    if (!(await this.holders(h, "root")).includes(this.o.hostKey)) { this.say(`${h}: WARNING: the host's key is not root here: its apps not updated`); return; }
+    const trees = await this.installedTrees(h);
+    let reindex: { from: number; to: number; app: string } | undefined;
+    for (const e of this.imageEntries(image)) {
+      if (trees.has(e.hash)) continue;
+      const p = await this.packagedApp(e);
+      const have = await this.installedApp(h, p.app);
+      if (have.version === p.version) continue;
+      const n = await this.installTree(h, p.app, p.tree, p.version);
+      this.say(`${h}: ${p.app} updated to ${p.version} (from ${have.version ?? "none"}; ${n} messages as root)`);
+      if (p.lookupVersion > have.lookupVersion) reindex = { from: have.lookupVersion, to: p.lookupVersion, app: p.app };
+    }
+    if (!reindex) return;
+    for (const service of services) await this.reindex(h, reindex.app, service, `lookupVersion ${reindex.from} → ${reindex.to}`);
+  }
+
+  /** The head <app>/reindex's record on an instance (skein-overlay 0.23.0), or undefined. */
+  private async reindexRecord(handle: string, app: string): Promise<{ running?: Record<string, unknown>; last?: Record<string, Rec> } | undefined> {
+    const l = await this.r.hydrate(handle);
+    const c = await l.kernel.call("head", `${app}/reindex`);
+    return c ? await l.kernel.store.get(c as never).catch(() => undefined) as { running?: Record<string, unknown>; last?: Record<string, Rec> } | undefined : undefined;
+  }
+
+  /**
+   * Root's reindex of one lookup service on an instance: `{fn: "reindex", args: {service}}` into <app>/reindex,
+   * logged as started, then watched (the head <app>/reindex's `last` for the service changes) and logged done or
+   * error. Not waited for (`reindexed`).
+   */
+  async reindex(handle: string, app: string, service: string, why = ""): Promise<void> {
+    const key = (v: unknown) => JSON.stringify(v ?? null, (_k, x) => typeof x === "bigint" ? x.toString() : x);
+    const before = key((await this.reindexRecord(handle, app))?.last?.[service]);
+    await this.rootMessage(handle, `${app}/reindex`, { fn: "reindex", args: { service } });
+    this.say(`${handle}: reindex ${service} started${why ? ` (${why})` : ""}`);
+    const t0 = Date.now();
+    const w = (async () => {
+      while (!this.stopped) {
+        await new Promise((r) => setTimeout(r, 250));
+        const rec = await this.reindexRecord(handle, app).catch(() => undefined);
+        const last = rec?.last?.[service];
+        if (!last || key(last) === before || rec?.running?.[service] !== undefined) continue;
+        if (typeof last.error === "string") this.say(`${handle}: reindex ${service} error: ${last.error} (${String(last.transactions)} transactions, ${String(last.steps)} steps)`);
+        else this.say(`${handle}: reindex ${service} done: ${String(last.transactions)} transactions, ${String(last.steps)} steps, ${Number(last.to) - Number(last.from)} ms in the log (${Date.now() - t0} ms here)`);
+        return;
+      }
+    })().finally(() => this.watching.delete(w));
+    this.watching.add(w);
   }
 
   /** Start (publish) an instance: the instance manager's start, reused (routed by `topics`). */

@@ -5,7 +5,10 @@
 //   open-exchange [run]                  the host: skein-host run's router, ports, libp2p node, chain feed,
 //                                        Arcade, pages; swap's events wired; at start the packaged swap
 //                                        app installed into swap when its version differs (the host's key
-//                                        is root there), then the instances reconciled with swap's heads.
+//                                        is root there), then the instances reconciled with swap's heads, then
+//                                        (0.20.1) each token instance and discovery given its image's packaged
+//                                        apps when their versions differ, and its lookups reindexed in place
+//                                        when a packaged lookupVersion is greater than the installed one.
 //                                        The first run (2026-11-02, zero config: what `setup` did) makes
 //                                        what is missing first: the one key and host.env (when absent), the
 //                                        host skein, `swap` from the image swap and `discovery` from the
@@ -70,7 +73,7 @@ export interface Running { host: Awaited<ReturnType<Skein["cli"]["runHost"]>>; e
  * events wired to the reactions, and the instances reconciled with swap's heads (not awaited here:
  * `exchange.idle()`). `router` options beyond the settings and `swapAppDir`: tests'.
  */
-export async function startExchange(sk: Skein, env: Env, o: { router?: Record<string, unknown>; swapAppDir?: string } = {}): Promise<Running> {
+export async function startExchange(sk: Skein, env: Env, o: { router?: Record<string, unknown>; swapAppDir?: string; imagesDir?: string } = {}): Promise<Running> {
   const home = sk.hostenv.homeOf(env.vars);
   const key = hostKey(sk, env.vars);
   mkdirSync(home, { recursive: true });
@@ -102,13 +105,15 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   relay = new Relay({ router: host.router, sk, log });
   walletHost = host.router;
   const pl = pools;
-  ex = new Exchange({ sk, router: host.router, hostKey: key.identity, hostWallet: key.wallet, log, ...(o.swapAppDir ? { swapAppDir: o.swapAppDir } : {}) });
+  ex = new Exchange({ sk, router: host.router, hostKey: key.identity, hostWallet: key.wallet, log, ...(o.swapAppDir ? { swapAppDir: o.swapAppDir } : {}), ...(o.imagesDir ? { imagesDir: o.imagesDir } : {}) });
   env.out(`open-exchange: swap's events wired (token-enabled, token-disabled, discovery-on, discovery-off, claimed) · skein ${skeinVersion()} · images ${IMAGES_DIR} · the host's key ${key.identity.slice(0, 8)}…`);
   for (const [h, rec] of early.splice(0)) ex.event(h, rec);
   void ex.updateSwap();
   void ex.reconcile();
+  // 0.20.1: the token instances' and discovery's packaged apps in place, their lookups reindexed on a greater lookupVersion.
+  void ex.updateInstances();
   const exchange = ex;
-  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { await exchange.idle(); pl.stop(); await host.stop(); db.close(); } };
+  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { await exchange.idle(); exchange.stopWatching(); pl.stop(); await host.stop(); db.close(); } };
 }
 
 async function run(sk: Skein, given: Env, rest: string[]): Promise<number> {
