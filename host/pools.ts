@@ -5,7 +5,8 @@
 //
 //   GET /@<tokenId>/amm/pools   {market, validators: [{identity, peerId, minLegSats?}], pools: [{poolId, lpPubKey,
 //                                outpoint, bsvReserve, tokenReserve, liquidityFeeBps, validationFeeBps, commissionBps,
-//                                validatorIdentityKey, validatorPeerId, swaps}]}   a plain read (0.14.0: no event stream)
+//                                validatorIdentityKey, validatorPeerId, swaps, lifetime?}]}   a plain read (0.14.0: no event stream;
+//                                0.19.0: `lifetime`, the pool lookup's counters for the pool, passed through)
 //       the instance's pools (its lookup ls_amm_<tokenId>, query {tokenId}) whose validator is beating
 //       on tm_color_<tokenId>-live now (the host's liveness table; the peer ID is the beat's `from`) AND
 //       whose commissionBps is at least the instance's market minimum; `market` = the instance's own
@@ -74,6 +75,8 @@ export interface PoolRow {
   poolId: string; lpPubKey?: string; outpoint: string; bsvReserve: unknown; tokenReserve: unknown;
   liquidityFeeBps: unknown; validationFeeBps: unknown; commissionBps: unknown;
   validatorIdentityKey: string; validatorPeerId: string; swaps: unknown;
+  /** 0.19.0 (skein-amm 0.47.0): the pool's counters, as the lookup's row carries them. */
+  lifetime?: unknown;
 }
 export interface Market { commissionPkh?: unknown; minCommissionBps?: unknown }
 export interface Validator { identity: string; peerId: string; minLegSats?: number | bigint }
@@ -308,6 +311,7 @@ export class Pools {
         outpoint: String(p.outpoint), bsvReserve: p.bsvReserve, tokenReserve: p.tokenReserve,
         liquidityFeeBps: p.liquidityFeeBps, validationFeeBps: p.validationFeeBps, commissionBps: p.commissionBps,
         validatorIdentityKey: v, validatorPeerId: val.peerId, swaps: p.swaps,
+        ...(p.lifetime && typeof p.lifetime === "object" ? { lifetime: p.lifetime } : {}),
       });
     }
     return { market, validators: [...live.values()], pools };

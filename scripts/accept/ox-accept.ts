@@ -44,7 +44,7 @@
 //                          CROSS-HOST race (a relaying host of another key) → the same, the relaying host's overlay
 //                          holding the accepted swap when it answers; the validator's host stopped → unreachable at once
 //   five swaps in a row  → (0.18.0) on a host of its own: one taker, five swaps on one pool, each funded by the previous
-//                          swap's change; each leg's funding BEEF from the page's own code (skein-amm 0.46.2
+//                          swap's change; each leg's funding BEEF from the page's own code (skein-amm 0.47.0
 //                          `fundingBeef`, the 0.45.0 function): what the topic admitted by txid; every request and reply BEEF ≤ CHAIN_BOUND;
 //                          (0.18.2) then a request naming by txid a transaction the validator does not hold → refused
 //                          bad_transaction at once (no hang, no lock), and the next request on the pool accepted
@@ -84,7 +84,7 @@ const { keyWallet } = await skein<typeof import("@dcasegr/skein/dist/wallet.js")
 const { FakeArcade } = await skein<typeof import("@dcasegr/skein/dist/host/fake-arcade.js")>("src/host/fake-arcade.ts");
 /** 0.18.0: the largest request or reply BEEF the five-swap chain may carry (bytes): a swap alone is ~12.6 KB here. */
 const CHAIN_BOUND = 16_000;
-/** The page's own leg code (skein-amm 0.46.2's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
+/** The page's own leg code (skein-amm 0.47.0's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
 async function ammClient(): Promise<{ PoolTemplate: any; fundingBeef: any; topicAdmitted: any; sdk4: any } | undefined> {
   try {
     const entry = fileURLToPath(import.meta.resolve("@dcasegr/amm-client"));
@@ -617,6 +617,10 @@ try {
   check((await get(`/@${B}/amm/candles?series=market&tf=2m&from=0&to=1`)).status === 400 && (await get(`/@${B}/amm/candles?series=market&tf=1m&from=0&to=${now}`)).status === 400, "…market: a bad tf 400; a window over 5000 buckets 400");
   const stB = await getJson(`/@${B}/amm/stats`) as Record<string, unknown> | undefined;
   check(stB?.tokenId === B && stB.buys24h === 1 && stB.sells24h === 1 && typeof stB.lastTradeAt === "number" && (stB.lastTradePrice as { sats?: number } | null)?.sats !== undefined && stB.pools === 0 && stB.price === null && stB.buyPrice === null && stB.sellPrice === null && stB.change24h === null, `GET /@<B>/amm/stats: closed, so no price; the last fill as lastTradePrice (${JSON.stringify(stB)})`);
+  check(stB?.trades === 2 && typeof stB.volumeSats === "number" && stB.volumeSats > 0 && typeof stB.volumeTokens === "number" && stB.volumeTokens > 0, `…(0.19.0) the token's lifetime counters: trades 2, volumeSats ${String(stB?.volumeSats)}, volumeTokens ${String(stB?.volumeTokens)}`);
+  check((await get(`/@${B}/amm/pools/beef?pool=${poolB}`)).status === 404, "GET /@<B>/amm/pools/beef: 404 (0.19.0: gone; a pool's transaction is /tx?id=)");
+  const spOne = await getJson(`/@${B}/amm/spends?outpoint=${ftx.get("pool_deploy")!.id("hex")}.0`) as Record<string, unknown> | undefined;
+  check(!!spOne && Object.keys(spOne).join() === "outpoint,spentBy" && spOne.spentBy === ftx.get("swap_bsv_in")!.id("hex"), `GET /@<B>/amm/spends?outpoint=<the deploy's>: {outpoint, spentBy} only, one lookup, no pool following (0.19.0; ${JSON.stringify(spOne)?.slice(0, 160)})`);
   const stAll = await getJson("/amm/stats") as Array<{ tokenId?: string }> | undefined;
   check(!!stAll && stAll.some((y) => y.tokenId === A) && stAll.some((y) => y.tokenId === B), `GET /amm/stats: every enabled token's (${stAll?.map((y) => String(y.tokenId).slice(0, 8)).join(", ")})`);
   const stIds = await getJson(`/amm/stats?ids=${B}`) as Array<{ tokenId?: string }> | undefined;
@@ -629,6 +633,7 @@ try {
   check(sp?.length === 2 && sp[0]!.outpoint === deployOp && sp[0]!.tokenId === B && sp[0]!.spentBy === ftx.get("swap_bsv_in")!.id("hex") && sp[1]!.outpoint === closeOp && sp[1]!.spentBy === undefined && sp[1]!.tokenId === undefined && (await get("/amm/spends")).status === 400, `GET /amm/spends?outpoint=: the deploy's spender with its token, the close's output unspent; none 400 (${JSON.stringify(sp)})`);
   const hB = await getJson(`/@${B}/amm/color/${B}/holders`) as { count?: number; rows?: Array<{ address?: string; balance?: number }> } | undefined;
   check(!!hB && (hB.count ?? 0) >= 1 && hB.rows?.length === hB.count && hB.rows!.every((y, i) => i === 0 || (y.balance ?? 0) <= (hB.rows![i - 1]!.balance ?? 0)), `GET /@<B>/amm/color/<B>/holders: ${JSON.stringify(hB)?.slice(0, 200)}`);
+  { const c = hB as { supply?: number; authorities?: number; burned?: number; burns?: number } | undefined; check(typeof c?.supply === "number" && c.supply > 0 && typeof c.authorities === "number" && typeof c.burned === "number" && typeof c.burns === "number", `…(0.19.0, skein-1color 0.17.0) the token's counters beside the holders: supply ${String(c?.supply)}, authorities ${String(c?.authorities)}, burned ${String(c?.burned)}`); }
 
   // ------------------------------------------------ a swap WITH token change (0.14.0): B's other lineage on a second host
   // (the fixtures' swap_token_change spends swap_bsv_in:0 as swap_tokens_in does, so one overlay holds one of them):
@@ -821,6 +826,8 @@ try {
           const moved = await until("the pools route at the new outpoint", async () => ((await get3(`/@${B}/amm/pools`)) as PoolsB | undefined)?.pools?.find((q) => q.poolId === poolB && q.outpoint === next), 30_000);
           const row = won[0]?.txid ? await get3(`/@${B}/amm/trades?txid=${won[0].txid}`) as Record<string, unknown> | undefined : undefined;
           check(!!moved && row?.poolId === poolB, `…/@<B>/amm/pools lists the pool at the accepted swap's continuation; its trade row (${JSON.stringify(row)?.slice(0, 120)})`);
+          const life = (moved as { lifetime?: { satsIn?: number; tokensIn?: number; lastTradeAt?: number } } | undefined)?.lifetime;
+          check(typeof life?.lastTradeAt === "number" && (life.satsIn ?? 0) + (life.tokensIn ?? 0) > 0, `…its row carries the pool's counters, lifetime (0.19.0; ${JSON.stringify(life)?.slice(0, 160)})`);
         }
         return won[0]?.txid;
       };
@@ -830,7 +837,7 @@ try {
         // building each leg's funding BEEF (`fundingBeef` over a wallet-like BEEF that grows with every swap, with
         // `topicAdmitted`): every request BEEF (the host's `requestBeef`) and every reply `beef` under CHAIN_BOUND.
         const amm = await ammClient();
-        check(!!amm, `chain: @dcasegr/amm-client (0.46.2) loads for the page's own leg code (${amm ? "ok" : "install its tarball: npm install --no-save --legacy-peer-deps <engine.tgz> <client.tgz>"})`);
+        check(!!amm, `chain: @dcasegr/amm-client (0.47.0) loads for the page's own leg code (${amm ? "ok" : "install it with its peers: in a directory of its own, npm install --legacy-peer-deps <engine.tgz> <client.tgz> @1sat/templates@0.1.1 @bsv/sdk@^4 @bsv/color-permission-module@npm:@bopen-io/color-permission-module@0.2.2, then link node_modules/@dcasegr/amm-client to it (the host's own @bsv/sdk 2 and @1sat/templates 0.0.x do not serve it)"})`);
         if (amm) {
           const { requestBeef } = await import("../../host/relay.ts");
           const assetHex = Buffer.from(ftx.get("token_deploy")!.hash() as number[]).toString("hex");

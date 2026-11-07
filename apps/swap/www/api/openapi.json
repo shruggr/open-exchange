@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Open Exchange public read API",
-    "version": "0.18.2",
+    "version": "0.19.0",
     "description": "Plain HTTP reads over the exchange's index: JSON unless the route says bytes; list parameters are comma-separated and answered one record per key in query order. Writes stay on the overlay protocol (`POST /submit`, BRC-22; `POST /lookup`, BRC-24) and on `/sendMessage` and `/call`; the host reads `/<app>/.live/<topic>` and `/<app>/.events` stay as they are. Cache classes: `state` = `Cache-Control: public, max-age=5`; `imm` = `public, max-age=31536000, immutable`, only for the bytes of a proven (mined) transaction, else `state`; `stream` = `text/event-stream`, no cache. `{token}` is a token id `<txid>_<vout>`; a token's routes are under its instance, `/@<token>/amm/…`. Each operation carries `x-cache` (its class) and `x-answered-by`."
   },
   "servers": [
@@ -503,104 +503,6 @@
         "x-route": "E1",
         "x-cache": "stream",
         "x-answered-by": "the Open Exchange host (the token instances' emitted pool events, passed through)"
-      }
-    },
-    "/@{token}/amm/pools/beef": {
-      "get": {
-        "operationId": "P3",
-        "summary": "Current pools with one BEEF",
-        "description": "The pool ids' current pools (live, or a rescinded pool's output, which the LP's Close takes back) in query order (an id with neither: nothing), or with no `pool` every live pool; `beef` is the base64 of one BEEF of their transactions.",
-        "tags": [
-          "pools"
-        ],
-        "parameters": [
-          {
-            "name": "pool",
-            "in": "query",
-            "required": false,
-            "description": "Pool ids (`<txid>_<vout>`), comma-separated. Absent: every live pool.",
-            "schema": {
-              "type": "string"
-            },
-            "example": "277f9d52c1a0e4b3d2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1ecbc_0"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "pools": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/PoolState"
-                      }
-                    },
-                    "beef": {
-                      "type": "string",
-                      "contentEncoding": "base64"
-                    }
-                  },
-                  "required": [
-                    "pools",
-                    "beef"
-                  ]
-                },
-                "example": {
-                  "pools": [
-                    {
-                      "poolId": "277f9d52c1a0e4b3d2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1ecbc_0",
-                      "lpPubKey": "03a1b2c3d4e5f60718293a4b5c6d7e8f9011223344556677889900aabbccddeeff",
-                      "outpoint": "277f9d52c1a0e4b3d2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1ecbc_0",
-                      "bsvReserve": 1000001,
-                      "tokenReserve": 99999950849,
-                      "liquidityFeeBps": 30,
-                      "validationFeeBps": 5,
-                      "commissionBps": 25,
-                      "validatorIdentityKey": "030683a6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbcc",
-                      "swaps": 0
-                    }
-                  ],
-                  "beef": "AQC+7wH+..."
-                }
-              }
-            },
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "example": "public, max-age=5"
-              }
-            }
-          },
-          "400": {
-            "description": "An id out of shape.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No token yet: this instance has had no deploy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "x-route": "P3",
-        "x-cache": "state",
-        "x-answered-by": "amm-p2p (skein-amm 0.40.0)"
       }
     },
     "/@{token}/amm/pools/at": {
@@ -1170,7 +1072,7 @@
       "get": {
         "operationId": "P8",
         "summary": "Outpoint spends",
-        "description": "What the chain state says of each outpoint: its spender and, for a pool output, the pool's current output. One outpoint answers the single object; several (a comma in the value) answer one record per outpoint in query order.",
+        "description": "An outpoint's spender in the chain state: ONE lookup per outpoint (0.19.0, skein-amm 0.47.0: the pool-following `current`, `hops`, `closed` are gone; following a pool is `/pools/history`). One outpoint answers the single object; several (a comma in the value) answer one record per outpoint in query order.",
         "tags": [
           "chain"
         ],
@@ -1207,10 +1109,7 @@
                 "example": [
                   {
                     "outpoint": "277f9d52c1a0e4b3d2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1ecbc.0",
-                    "spentBy": "e419cdd700000000000000000000000000000000000000000000000000000000",
-                    "current": "e419cdd700000000000000000000000000000000000000000000000000000000.0",
-                    "hops": 1,
-                    "closed": false
+                    "spentBy": "e419cdd700000000000000000000000000000000000000000000000000000000"
                   }
                 ]
               }
@@ -2990,6 +2889,9 @@
           "swaps": {
             "type": "integer",
             "description": "The pool's Swaps so far (0 at the deploy)."
+          },
+          "lifetime": {
+            "$ref": "#/components/schemas/PoolLifetime"
           }
         },
         "required": [
@@ -3273,24 +3175,11 @@
           },
           "spentBy": {
             "type": "string",
-            "description": "The spending txid."
-          },
-          "current": {
-            "type": "string",
-            "description": "For a pool output: the pool's current output `<txid>.<vout>`, followed spender to spender."
-          },
-          "hops": {
-            "type": "integer"
-          },
-          "closed": {
-            "type": "boolean",
-            "description": "A pool spent by a transaction that did not continue it (Close)."
+            "description": "The spending txid (the chain state's first held spender not rejected); absent when unspent."
           }
         },
         "required": [
-          "outpoint",
-          "hops",
-          "closed"
+          "outpoint"
         ]
       },
       "SwapRequest": {
@@ -3644,7 +3533,7 @@
       },
       "Stats": {
         "type": "object",
-        "description": "A token at the read's time (the Open Exchange host's answer): `price` = the planner's `priceOf(listed pools).mid` (the midpoint of what a buy and a sell of 1% of the pooled sats would pay now, over the pools `/@<token>/amm/pools` lists), `buyPrice` / `sellPrice` its two sides, null with no pool; `change1h` / `change24h` the change in bps (truncated toward zero) from the same price over the pools listed an hour / a day ago (`/pools/at`, every listed pool) to `price`, null when either is none; `lastTradePrice` the last trade's price (null without one); volumes and counts over the last 24 h of trades; TVL and `pools` over the listed pools.",
+        "description": "A token at the read's time (the Open Exchange host's answer): `price` = the planner's `priceOf(listed pools).mid` (the midpoint of what a buy and a sell of 1% of the pooled sats would pay now, over the pools `/@<token>/amm/pools` lists), `buyPrice` / `sellPrice` its two sides, null with no pool; `change1h` / `change24h` the change in bps (truncated toward zero) from the same price over the pools listed an hour / a day ago (`/pools/at`, every listed pool) to `price`, null when either is none; `lastTradePrice` the last trade's price (null without one); volumes and counts over the last 24 h of trades; TVL and `pools` over the listed pools. 0.19.0: `volumeSats`, `volumeTokens`, `trades` the token's lifetime counters (the pool lookup's `amm-token-counters`, from skein-amm 0.47.0 on).",
         "properties": {
           "tokenId": {
             "type": "string"
@@ -3727,6 +3616,18 @@
           },
           "pools": {
             "type": "integer"
+          },
+          "volumeSats": {
+            "type": "integer",
+            "description": "Lifetime volume, the trades' sats sides."
+          },
+          "volumeTokens": {
+            "type": "integer",
+            "description": "Lifetime volume, the trades' token sides (base units)."
+          },
+          "trades": {
+            "type": "integer",
+            "description": "Lifetime trade count."
           }
         },
         "required": [
@@ -3778,7 +3679,7 @@
       },
       "Holders": {
         "type": "object",
-        "description": "A token's holders: `count` the addresses with a balance; `rows` largest balance first, `address` the P2PKH address on the instance's network, `balance` in base units. Only P2PKH value outputs count (pools and other contracts do not).",
+        "description": "A token's holders: `count` the addresses with a balance; `rows` largest balance first, `address` the P2PKH address on the instance's network, `balance` in base units. Only P2PKH value outputs count (pools and other contracts do not). 0.19.0 (skein-1color 0.17.0): the token's counters beside them: `supply` the circulating supply (the unspent value outputs' amounts, the deploy included), `authorities` the unspent authority outputs, `burned` the total burned and `burns` the transactions that burned (inputs carrying more of the token than the admitted outputs); counted from 0.17.0 on.",
         "properties": {
           "count": {
             "type": "integer"
@@ -3800,6 +3701,18 @@
                 "balance"
               ]
             }
+          },
+          "supply": {
+            "type": "integer"
+          },
+          "authorities": {
+            "type": "integer"
+          },
+          "burned": {
+            "type": "integer"
+          },
+          "burns": {
+            "type": "integer"
           }
         },
         "required": [
@@ -4055,6 +3968,66 @@
         },
         "required": [
           "outpoint"
+        ]
+      },
+      "PoolLifetime": {
+        "type": "object",
+        "description": "The pool's counters (skein-amm 0.47.0, the pool lookup's `amm-pool-counters`): written at each admitted Swap and unwound at its rejection; Swaps admitted before 0.47.0 are not counted. The pool's side: a buy brings `amountIn` sats in and sends `amountOut` tokens out, a sell the reverse; each fee in the Swap's input asset.",
+        "properties": {
+          "satsIn": {
+            "type": "integer"
+          },
+          "satsOut": {
+            "type": "integer"
+          },
+          "tokensIn": {
+            "type": "integer"
+          },
+          "tokensOut": {
+            "type": "integer"
+          },
+          "lpSats": {
+            "type": "integer"
+          },
+          "lpTokens": {
+            "type": "integer"
+          },
+          "validatorSats": {
+            "type": "integer"
+          },
+          "validatorTokens": {
+            "type": "integer"
+          },
+          "commissionSats": {
+            "type": "integer"
+          },
+          "commissionTokens": {
+            "type": "integer"
+          },
+          "lastTradeAt": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The latest counted Swap's time (ms), null with none."
+          }
+        },
+        "required": [
+          "satsIn",
+          "satsOut",
+          "tokensIn",
+          "tokensOut",
+          "lpSats",
+          "lpTokens",
+          "validatorSats",
+          "validatorTokens",
+          "commissionSats",
+          "commissionTokens",
+          "lastTradeAt"
         ]
       }
     }
