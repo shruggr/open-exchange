@@ -45,7 +45,9 @@
 //                          holding the accepted swap when it answers; the validator's host stopped → unreachable at once
 //   five swaps in a row  → (0.18.0) on a host of its own: one taker, five swaps on one pool, each funded by the previous
 //                          swap's change; each leg's funding BEEF from the page's own code (skein-amm 0.46.1
-//                          `fundingBeef`, the 0.45.0 function): what the topic admitted by txid; every request and reply BEEF ≤ CHAIN_BOUND
+//                          `fundingBeef`, the 0.45.0 function): what the topic admitted by txid; every request and reply BEEF ≤ CHAIN_BOUND;
+//                          (0.18.2) then a request naming by txid a transaction the validator does not hold → refused
+//                          bad_transaction at once (no hang, no lock), and the next request on the pool accepted
 //   swap's pages         → a restart with a packaged swap app of another version installs it into swap (as root),
 //                          the same version installs nothing; swap's state and the claimant's grant kept
 //   every store replays to itself — by the NATIVE reference (`skein-kernel replay`, skein's
@@ -874,6 +876,31 @@ try {
           }
           const worst = sizes.reduce((m, x) => Math.max(m, x.request, x.reply), 0);
           check(sizes.length === 5 && worst <= CHAIN_BOUND, `chain: five swaps in a row on one pool by one taker, every request and reply BEEF ≤ ${CHAIN_BOUND} bytes (largest ${worst}; requests ${sizes.map((x) => x.request).join(", ")}; replies ${sizes.map((x) => x.reply).join(", ")}; the 0.17 shape's requests ${sizes.map((x) => x.before).join(", ")})`);
+          if (sizes.length === 5) {
+            // 0.46.2 (D6): a request naming by txid a transaction this instance does not hold — the taker's own
+            // transaction X (spending its change, never submitted anywhere) by txid alone, the leg spending X — is
+            // refused bad_transaction at once by the validator's pre-check (the door's verifier with the held set):
+            // no hang, no lock; then the next request on the pool (the real change, raw rule as 0.45.0) is accepted.
+            const x = new Transaction();
+            x.addInput({ sourceTransaction: fundTx, sourceOutputIndex: fundVout, unlockingScriptTemplate: new P2PKH().unlock(taker), sequence: 0xffffffff });
+            x.addOutput({ lockingScript: takerLock, satoshis: fundTx.outputs[fundVout]!.satoshis! - 200 });
+            await x.sign();
+            const t = await legOn(x, 0);
+            const ub = new S4.Beef();
+            ub.mergeTxidOnly(x.id("hex"));
+            ub.atomicTxid = x.id("hex");
+            const unheld = ub.toBinary() as number[];
+            const t0 = Date.now();
+            const got = await postLeg(unheld, t, `${poolTx.id("hex")}_0`);
+            const took = Date.now() - t0;
+            check(got.ok === false && got.reason === "bad_transaction" && String(got.detail).startsWith("UnknownTxidOnly") && String(got.detail).includes(x.id("hex")) && took < 10_000,
+              `chain: a request naming by txid a transaction the validator does not hold (${x.id("hex").slice(0, 8)}…) refused at once, ${took} ms (${got.reason}: ${String(got.detail).slice(0, 220)})`);
+            const t2 = await legOn(fundTx, fundVout);
+            const funding = amm.fundingBeef(wallet, fundTx.id("hex"), [fundTx.id("hex")], { poolTxid: poolTx.id("hex"), admitted: amm.topicAdmitted(assetHex, poolTx.id("hex")) }) as number[];
+            const n0 = Date.now();
+            const next = await postLeg(funding, t2, `${poolTx.id("hex")}_0`);
+            check(next.ok === true && !!bytesOf(next.tx), `chain: the next request on the pool accepted, ${Date.now() - n0} ms (no lock left: ${next.ok === true ? String(next.txid).slice(0, 8) + "…" : `${next.reason}: ${String(next.detail).slice(0, 200)}`})`);
+          }
         }
       } else {
       // n on the deployed pool output.
