@@ -48,3 +48,10 @@ export async function latest(router: Router, handle: string, name: string): Prom
   const d = rows[rows.length - 1];
   return d ? record(d) : undefined;
 }
+
+/** The latest event under exactly `name` on `handle` as delivered (its place and record), or undefined. */
+export async function latestDelivered(router: Router, handle: string, name: string): Promise<{ place: string; rec: Rec } | undefined> {
+  const rows = await router.events.read(handle, { name, latest: true });
+  const d = rows[rows.length - 1];
+  return d ? { place: d.id, rec: record(d) } : undefined;
+}

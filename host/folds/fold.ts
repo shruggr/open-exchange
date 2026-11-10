@@ -21,9 +21,12 @@ export class TokenFold {
 
   constructor(tokenId: string) { this.tokenId = tokenId; }
 
-  /** Fold one `amm/hop` record; returns the hop, or undefined when the record is not one. */
-  take(rec: Rec): Hop | undefined {
-    const h = hopOf(rec);
+  /**
+   * Fold one `amm/hop` row at its index place; returns the hop, or undefined when the record is not one. THE STANDING
+   * RULE: every row whose `txid` a later `revert` row names is dropped.
+   */
+  take(rec: Rec, place = ""): Hop | undefined {
+    const h = hopOf(rec, place);
     if (!h) return undefined;
     if (h.kind === "revert") {
       // The reverted transaction's hops leave the history; the pool stands as the revert row says (no outpoint: gone).

@@ -25,7 +25,7 @@ export class Folds {
     f.onHop = (h) => { if (live) this.onHop?.(tokenId, h); };
     const slot: { fold: Promise<TokenFold>; stop?: () => void } = { fold: Promise.resolve(f) };
     slot.fold = (async () => {
-      slot.stop = await followAll(this.router, tokenId, { name: HOP_EVENT }, (_n, rec) => { f.take(rec); }, () => { if (this.folds.get(tokenId) === slot) this.folds.delete(tokenId); });
+      slot.stop = await followAll(this.router, tokenId, { name: HOP_EVENT }, (_n, rec, d) => { f.take(rec, d.id); }, () => { if (this.folds.get(tokenId) === slot) this.folds.delete(tokenId); });
       live = true;
       this.say(`${tokenId}: fold: ${f.hops.length} hops replayed, following ${HOP_EVENT}`);
       return f;

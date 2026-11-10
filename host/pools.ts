@@ -3,7 +3,7 @@
 // Router option `appRead` — the routes that join what only the host holds (the beats it keeps per topic, every enabled
 // token instance) to a token instance's pools. 0.21.0 (G2, David: every public read path and its JSON stays; the
 // newest-first and aggregate reads are the host's, folded from the event stream): the pools, trades, candles, stats,
-// /pools/at, /pools/history and positions come from the host's FOLD of each token instance's `amm/hop` events
+// /pools/at and /pools/history come from the host's FOLD (the instance keeps /positions) of each token instance's `amm/hop` events
 // (host/folds, replayed from place zero at start, then live), no longer from the instance's lookup and read routes;
 // the feeds from the same subscription, no longer `appEvent`:
 //
@@ -57,8 +57,9 @@ import { livePoolRows } from "./folds/pools.ts";
 import { instanceStats } from "./folds/stats.ts";
 import { poolsAt } from "./folds/pools-at.ts";
 import { NotFound, poolHistory } from "./folds/pool-history.ts";
-import { positions } from "./folds/positions.ts";
-import { BadQuery, trade, trades } from "./folds/trades.ts";
+import { BadQuery, tradeRow, trades } from "./folds/trades.ts";
+import { hopOf } from "./folds/hop.ts";
+import { latestDelivered } from "./events.ts";
 import { candles } from "./folds/candles.ts";
 
 type RouterRequest = import("@dcasegr/skein/dist/host/router.js").RouterRequest;
@@ -279,8 +280,11 @@ export class Pools {
         const txid = q.get("txid");
         if (txid !== null) {
           if (!/^[0-9a-f]{64}$/.test(txid)) return problem(400, "want ?txid=<txid>: 64 hex characters");
-          const row = await trade(f, txid, h);
-          return row ? jsonAnswer(200, row, { "cache-control": CACHE }) : problem(404, "no trade for this txid");
+          // The recognizer's answer for one Swap: the latest `amm/output/<txid>.0` row (its continuation), standing.
+          const got = await latestDelivered(this.router, handle, `amm/output/${txid}.0`).catch(() => undefined);
+          const hop = got ? hopOf(got.rec, got.place) : undefined;
+          const standing = hop && hop.kind === "swap" && hop.txid === txid && f.hops.some((x) => x.txid === txid);
+          return standing ? jsonAnswer(200, tradeRow(hop, await h(txid)), { "cache-control": CACHE }) : problem(404, "no trade for this txid");
         }
         return jsonAnswer(200, await trades(f, q, h), { "cache-control": CACHE });
       }
@@ -289,11 +293,18 @@ export class Pools {
         if (t === null || !/^\d+$/.test(t)) return problem(400, "want ?t=<ms>");
         return jsonAnswer(200, poolsAt(await this.fold(handle), Number(t)), { "cache-control": CACHE });
       }
-      if (route === POOLS_HISTORY_ROUTE) return jsonAnswer(200, poolHistory(await this.fold(handle), q), { "cache-control": CACHE });
-      if (route === POSITIONS_ROUTE) {
-        const ids = (q.get("pool") ?? "").split(",").map((x) => x.trim()).filter((x) => x !== "");
-        if (ids.length === 0 || ids.some((x) => !TOKEN_ID.test(x))) return problem(400, "want ?pool=<txid>_<vout>[,…]");
-        return jsonAnswer(200, positions(await this.fold(handle), ids), { "cache-control": CACHE });
+      if (route === POOLS_HISTORY_ROUTE) {
+        const op = q.get("outpoint");
+        let start: { poolId: string; place: string } | null = null;
+        if (op !== null) {
+          // A wallet's pool output `<txid>_<vout>` (today's form); the recognizer names outputs `<txid>.<vout>`.
+          const m = /^([0-9a-f]{64})[_.](\d+)$/.exec(op);
+          if (!m) return problem(400, "outpoint: <txid>_<vout>");
+          const got = await latestDelivered(this.router, handle, `amm/output/${m[1]}.${m[2]}`).catch(() => undefined);
+          const pid = got && typeof got.rec.poolId === "string" ? got.rec.poolId : undefined;
+          if (got && pid) start = { poolId: pid, place: got.place };
+        }
+        return jsonAnswer(200, poolHistory(await this.fold(handle), q, start), { "cache-control": CACHE });
       }
     } catch (e) {
       if (e instanceof BadQuery) return problem(400, e.message);
@@ -437,8 +448,8 @@ export class Pools {
     const out: Array<{ tokenId: string } & Rec> = [];
     for (const id of this.tokens()) {
       try {
-        const ids = pool.split(",").map((x) => x.trim()).filter((x) => x !== "");
-        for (const r of positions(await this.fold(id), ids)) out.push({ tokenId: id, ...r });
+        const rows = await this.instanceRead(id, "GET", `positions?pool=${encodeURIComponent(pool)}`);
+        if (Array.isArray(rows)) for (const r of rows as Rec[]) out.push({ tokenId: id, ...r });
       } catch (e) { this.say(`${id}: positions: left out of /amm/positions: ${(e as Error).message}`); }
     }
     return out;

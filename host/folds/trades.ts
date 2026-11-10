@@ -1,4 +1,4 @@
-// `/trades` (amm-p2p 0.48.1 H1): `?txid=` one row (404 none); else `?from&to&limit(≤500)&before=<cursor>&pool=`, the
+// `/trades` (amm-p2p 0.48.1 H1, the host's from 0.21.0): `?txid=` one row (host/pools.ts: the latest `amm/output/<txid>.0`, 404 none); else `?from&to&limit(≤500)&before=<cursor>&pool=`, the
 // page newest first, `next` the last row's cursor when the page is full. A row: txid, poolId, lpPubKey, side,
 // amountIn, amountOut, feeLp, feeValidator, feeCommission, bsvReserve, tokenReserve, payoutPkh, at, height (the
 // block height its `chain/tx/<txid>` names when mined, else null — `heightOf`).
@@ -29,12 +29,6 @@ export function tradeRow(h: Hop, height: number | null): Rec {
 }
 
 export type HeightOf = (txid: string) => Promise<number | null>;
-
-/** One trade by txid, or undefined. */
-export async function trade(f: TokenFold, txid: string, heightOf: HeightOf): Promise<Rec | undefined> {
-  const h = f.swaps().find((x) => x.txid === txid);
-  return h ? tradeRow(h, await heightOf(h.txid)) : undefined;
-}
 
 export async function trades(f: TokenFold, q: URLSearchParams, heightOf: HeightOf): Promise<{ trades: Rec[]; next: string | null }> {
   const int = (k: string) => { const v = q.get(k); if (v === null) return undefined; if (!/^\d+$/.test(v)) throw new BadQuery(`${k}: an integer`); return Number(v); };
