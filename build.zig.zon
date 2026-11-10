@@ -1,18 +1,22 @@
 .{
     .name = .open_exchange,
-    .version = "0.1.2",
+    .version = "0.21.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xf7e22713b189a87e,
     .dependencies = .{
         // The AMM library (shruggr/skein-amm): its deploy reader (src/deploy.zig) and fixtures, and
         // through it the overlay engine's SDK modules and the 1Color module the swap program links.
+        // The AMM library (shruggr/skein-amm 0.49.0, branch release-0.49 fc88a84): its deploy reader
+        // (src/deploy.zig) and fixtures, and through it the overlay engine's SDK modules and the 1Color module.
         .skein_amm = .{
-            .url = "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.22.0.tar.gz",
-            .hash = "skein_amm-0.22.0-IsSTBg5ulAA853JqrrnHSG74znp4q52uM5e2Hbqv9PGd",
+            .url = "https://github.com/shruggr/skein-amm/archive/fc88a84038353b57e62981931c0960aa4c9018d1.tar.gz",
+            .hash = "skein_amm-0.49.0-IsSTBjeoSgAgOLWMtj9ThcA7v73EX7ZjdKOJgwdcZuU8",
         },
-        // PREPARED (rebuild-0.21-perms): the signer app's client (skein-sdk branch `signer-client`, local), for the paid
-        // listing's BRC-29 derivation through the signer app. A re-pin to the skein-sdk tag when it lands.
-        .skein_sdk_signer = .{ .path = "../wt-sdk-signer-client" },
+        // skein-sdk v0.20.0: the signer app's client (lib/signer.zig) and the named call (`sk.callAs`).
+        .skein_sdk_signer = .{
+            .url = "https://github.com/shruggr/skein-sdk/archive/refs/tags/v0.20.0.tar.gz",
+            .hash = "skein_sdk-0.20.0-YroFBGc4HACEuIOmCs1eYaSpsjCKtFwEsaPX9fvH7XnW",
+        },
     },
     .paths = .{
         "build.zig",

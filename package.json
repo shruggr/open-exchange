@@ -1,7 +1,7 @@
 {
   "name": "open-exchange",
-  "version": "0.20.1",
-  "description": "The Open Exchange: an application host on skein's host \u2014 the swap instance's facts materialized as token instances (shruggr/open-exchange#1, shruggr/skein#164). Runs with node alone: skein's host loads its kernel as wasm.",
+  "version": "0.21.0",
+  "description": "The Open Exchange: an application host on skein's host — the swap instance's facts materialized as token instances (shruggr/open-exchange#1, shruggr/skein#164). Runs with node alone: skein's host loads its kernel as wasm.",
   "type": "module",
   "bin": {
     "open-exchange": "./bin/open-exchange.js"
@@ -20,8 +20,8 @@
     "accept": "node --experimental-strip-types --no-warnings scripts/accept/ox-accept.ts"
   },
   "dependencies": {
-    "@dcasegr/skein": "0.3.3",
-    "@dcasegr/amm-engine": "0.48.1",
+    "@dcasegr/skein": "0.7.0",
+    "@dcasegr/amm-engine": "0.49.0",
     "@bsv/sdk": "^2.8.6"
   },
   "devDependencies": {

@@ -49,13 +49,13 @@
 //! **The paid enable** (0.15.3; paid.zig): `POST /enable?tokenId=&paymentTxid=&paymentVout=&derivationPrefix=
 //! &derivationSuffix=`, the body ONE BEEF with the token's deploy and the payment; filters kernel.brc104,
 //! kernel.beef, then this app's `enable-check` (fn `enableCheck`); the handler `enablePaid`, in the request's step
-//! (PREPARED, rebuild-0.21-perms; HANDOFF-2026-11-09 WALLET + SIGNER and its CORRECTION): (1) the payee key, BRC-29
+//! (0.21.0; HANDOFF-2026-11-09 WALLET + SIGNER and its CORRECTION): (1) the payee key, BRC-29
 //! for the signed sender, from the SIGNER APP under any name (manifest `calls: {signer: "*"}`); (2) the payment
 //! output must pay it; (3) the payment's own BEEF (cut, parents first) into the CHAIN APP by its in-VM `ingest`
 //! (it records it and emits the broadcast); (4) filed with the WALLET APP, `callAs(file, "bsv", {outpoint,
 //! protocol: [2, "3241645161d8"], keyID: "<prefix> <suffix>", counterparty: <the sender>})` (manifest `calls:
 //! {wallet: ["bsv"]}`); (5) what the admin's enable does, keeping `{paidBy, paymentTxid, satoshisPaid}`. A payment a
-//! row of this app keeps already: refused (409). No `amm/pay` box, no genesis wallet.
+//! row of this app keeps, or the wallet app holds (`filed: false`): refused (409). No `amm/pay` box, no genesis wallet.
 const std = @import("std");
 const w = @import("chain");
 const vm = @import("overlay_sk");
@@ -69,6 +69,7 @@ const app = @import("app");
 const files = @import("files");
 const scbor = @import("sdk_cbor");
 const signer = @import("signer");
+const sk20 = @import("sk20");
 
 const cbor = w.cbor;
 const Value = cbor.Value;
@@ -141,8 +142,9 @@ fn bodyWire(a: Allocator, arg: Value) ?[]const u8 {
     return w.record.wireOf(a, vm.store(), env) catch null;
 }
 
-/// PREPARED (rebuild-0.21-perms): whether a payment was used for a listing already — a row of this app's own list
-/// keeps it (`paymentTxid`). (Was: the genesis wallet's `wallet/state` actions; the genesis wallet goes.)
+/// Whether a payment was used for a listing already — a row of this app's own list keeps it (`paymentTxid`): the
+/// filter's early refusal (nothing logged). The authority is the wallet app's: `file` answers `filed: false` for an
+/// output it holds (the handler's 409).
 fn paymentUsed(a: Allocator, txid: [32]u8) !bool {
     const hex = std.fmt.bytesToHex(txid, .lower);
     for (tokens.rowsOf(try headRecord(a, tokens.tokens_head))) |r| if (eql(u8, r.getText("paymentTxid") orelse "", &hex)) return true;
@@ -160,13 +162,10 @@ fn appProgram(a: Allocator, name: []const u8, prog: []const u8) !?[]const u8 {
     return ps.getCid(prog);
 }
 
-/// The kernel's name-carrying in-VM call (skein `call-permissions`; kernel-permissions-contract §1): the kernel checks
-/// this app is approved to call the callee under `name`. A re-pin to `sk.callAs` when the SDK carries it.
-const named = struct {
-    extern "skein" fn callAs(prog: [*]const u8, prog_len: u32, func: [*]const u8, func_len: u32, name: [*]const u8, name_len: u32, arg: [*]const u8, arg_len: u32, out: [*]u8, cap: u32) i32;
-};
+/// The kernel's name-carrying in-VM call (skein call permissions; skein-sdk 0.20.0 `sk.callAs`): the kernel checks this
+/// app is approved to call the callee under `name`.
 fn callAs(a: Allocator, prog: []const u8, func: []const u8, name: []const u8, arg: []const u8) ![]u8 {
-    return ssk.result(a, named.callAs, .{ prog.ptr, @as(u32, @intCast(prog.len)), func.ptr, @as(u32, @intCast(func.len)), name.ptr, @as(u32, @intCast(name.len)), arg.ptr, @as(u32, @intCast(arg.len)) });
+    return sk20.callAs(a, prog, func, name, arg);
 }
 
 fn problemJson(a: Allocator, status: u16, code: []const u8, description: []const u8) !Value {
@@ -188,7 +187,7 @@ fn enableCheck(a: Allocator, arg: Value) !Value {
 
 /// The handler `enablePaid` (0.15.3): the payment's output must pay the BRC-29 key derived for the signed sender
 /// (key id "<prefix> <suffix>", counterparty the sender, for self) — else 400, nothing enabled; then the payment into
-/// the chain app and filed with the wallet app (PREPARED), and the admin's enable: the row with the payment,
+/// the chain app and filed with the wallet app, and the admin's enable: the row with the payment,
 /// the event token-enabled with the defaults (its BEEF the deploy's, Atomic); answered `{fn: "enable", result: <the row>}`.
 fn enablePaid(a: Allocator, in: Value, arg: Value) !Value {
     const query = arg.getText("query") orelse "";
@@ -206,24 +205,29 @@ fn enablePaid(a: Allocator, in: Value, arg: Value) !Value {
     // 1. The key this payment must pay: BRC-29, the standard way (counterparty the sender, for self), from the SIGNER
     //    APP under any name (the payer is anyone: the swap app's approval is `calls: {signer: "*"}`, root's grant).
     const frame = try wl.wire.getPublicKeyFrameFor(a, wl.brc29.security_level, wl.brc29.protocol_name, try wl.brc29.keyId(a, np.prefix, np.suffix), .{ .other = sender[0..33].* }, true);
-    const key = try wl.wire.publicKeyResult(try signer.requestAny(a, frame));
+    const kf = signer.requestAny(a, frame) catch |e| return problemJson(a, 503, "ERR_UNAVAILABLE", try std.fmt.allocPrint(a, "the signer app did not derive the payee key: {s}", .{@errorName(e)}));
+    const key = try wl.wire.publicKeyResult(kf);
     // 2. The output pays it.
     if (!eql(u8, out.script, &wl.brc29.p2pkh(key))) return problemJson(a, 400, "ERR_INVALID_PAYMENT", "the payment output does not pay this exchange's BRC-29 key for the sender and the named derivation");
     const sender_hex = try a.dupe(u8, &std.fmt.bytesToHex(sender[0..33].*, .lower));
     // 3. The payment into the chain app, in this step (chain 0.10.0 `ingest` as an in-VM call: it records it and emits
     //    the broadcast; the payer paid BRC-177 nosend, so nobody else sends it). Its own BEEF, cut parents first.
     const chain_prog = (try appProgram(a, "chain", "chain")) orelse return problemJson(a, 503, "ERR_UNAVAILABLE", "no chain app is installed (no head chain/app)");
-    _ = try ssk.call(a, chain_prog, "ingest", try cbor.encode(a, .{ .map = try a.dupe(cbor.Entry, &.{.{ .key = "beef", .value = .{ .bytes = try paid.cutFor(a, wire, np.txid) } }}) }));
+    _ = ssk.call(a, chain_prog, "ingest", try cbor.encode(a, .{ .map = try a.dupe(cbor.Entry, &.{.{ .key = "beef", .value = .{ .bytes = try paid.cutFor(a, wire, np.txid) } }}) })) catch |e|
+        return problemJson(a, 400, "ERR_INVALID_PAYMENT", try std.fmt.allocPrint(a, "the chain app did not take the payment in: {s}", .{@errorName(e)}));
     // 4. Filed with the wallet app as ours, under the BSV basket, with the payer's BRC-29 derivation (HANDOFF-2026-11-09
     //    WALLET + SIGNER point 9 and its CORRECTION: "listing payment → filed as ours with the payer's derivation").
     const wallet_prog = (try appProgram(a, "wallet", "wallet")) orelse return problemJson(a, 503, "ERR_UNAVAILABLE", "no wallet app is installed (no head wallet/app)");
     const outpoint = try std.fmt.allocPrint(a, "{s}.{d}", .{ np.txid_hex, np.vout });
-    _ = try callAs(a, wallet_prog, "file", bsv_basket, try cbor.encode(a, .{ .map = try a.dupe(cbor.Entry, &.{
+    const filed_out = callAs(a, wallet_prog, "file", bsv_basket, try cbor.encode(a, .{ .map = try a.dupe(cbor.Entry, &.{
         .{ .key = "outpoint", .value = .{ .text = outpoint } },
         .{ .key = "protocol", .value = .{ .array = try a.dupe(Value, &.{ .{ .uint = wl.brc29.security_level }, .{ .text = wl.brc29.protocol_name } }) } },
         .{ .key = "keyID", .value = .{ .text = try wl.brc29.keyId(a, np.prefix, np.suffix) } },
         .{ .key = "counterparty", .value = .{ .text = sender_hex } },
-    }) }));
+    }) })) catch |e| return problemJson(a, 503, "ERR_UNAVAILABLE", try std.fmt.allocPrint(a, "the wallet app did not file the payment: {s}", .{@errorName(e)}));
+    // "Already held" is the wallet app's word: a filing of an output it holds answers `filed: false`.
+    const filed = cbor.decode(a, filed_out) catch return problemJson(a, 503, "ERR_UNAVAILABLE", "the wallet app's answer does not decode");
+    if (filed.get("filed")) |f| if (f == .boolean and !f.boolean) return problemJson(a, 409, "ERR_PAYMENT_REPLAYED", "this payment is in the exchange's wallet already");
     // 5. The admin's enable, the payment kept on the row.
     const row = try paid.paidRow(a, try tokens.enabledRow(a, ok.deploy, now(in), .{ .bytes = ok.deploy_beef }), sender, np.txid_hex, out.satoshis);
     try saveRow(a, row);
