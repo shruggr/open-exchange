@@ -98,7 +98,9 @@ export class Door {
       signal?.addEventListener("abort", onAbort);
       void (async () => {
         try {
-          stop = await followAll(this.r, handle, { name }, (_n, rec) => { if (decided(rec)) void this.answer(handle, app, topic, txid, tx, rec).then(finish); }, () => finish({ verdict: "gone" }));
+          stop = await followAll(this.r, handle, { name }, (_n, rec) => {
+            if (decided(rec)) this.answer(handle, app, topic, txid, tx, rec).then(finish, (e: Error) => finish({ verdict: "refused", status: 500, reason: `the STEAK: ${e.message}` }));
+          }, () => finish({ verdict: "gone" }));
           if (done) { stop(); return; }
           const a = await this.r.submitAsSelf(handle, app, beef, topic);
           if (a.verdict === "reject") finish({ verdict: "refused", status: 400, reason: a.reason ?? "turned away at the door" });

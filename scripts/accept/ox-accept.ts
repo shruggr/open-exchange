@@ -70,6 +70,7 @@ import { load, OX_ROOT, skein, SWAP_APP_DIR, swapAppVersion } from "../../host/s
 import { firstRun, main, settings, startExchange, type Env, type Running } from "../../host/cli.ts";
 import { changeBps, marketCandles, mergeStats, poolState } from "../../host/pools.ts";
 import { commissionPkhFor } from "../../host/relay.ts";
+import { instanceStats } from "../../host/folds/stats.ts";
 import { priceOf } from "@dcasegr/amm-engine";
 
 type Sdk = typeof import("@bsv/sdk");
@@ -505,9 +506,10 @@ try {
   // ------------------------------------------------ stats over the listed pools (0.13.1): P1 (validator not beating)
   // and P2 (commission below the market's minimum) are not in the host's answer. 0.20.0 (skein-amm 0.48.0 D4): the
   // instance's own /stats row carries only what the host does not recompute — no TVL, pool count or changes.
-  const ownA = await (x!.pools as unknown as { instanceStats(h: string): Promise<Record<string, unknown>> }).instanceStats(A);
+  // 0.21.0: the instance part is the host's fold now (host/folds/stats.ts), not an instance route.
+  const ownA = instanceStats(await x!.pools.folds.ensure(A), Date.now()) as Record<string, unknown>;
   check(JSON.stringify(Object.keys(ownA)) === JSON.stringify(["tokenId", "lastTradePrice", "volume24hSats", "volume24hTokens", "buys24h", "sells24h", "lastTradeAt", "volumeSats", "volumeTokens", "trades"]) && ownA.lastTradeAt === null,
-    `A's instance /stats (0.20.0): the last fill, the volumes and the counts only (${JSON.stringify(ownA)})`);
+    `A's instance part of the stats (0.21.0: the host's fold): the last fill, the volumes and the counts only (${JSON.stringify(ownA, (_k, v) => typeof v === "bigint" ? String(v) : v)})`);
   const stA0 = await getJson(`/@${A}/amm/stats`) as Record<string, unknown> | undefined;
   const midA0 = priceOf([poolState(row0 as Record<string, unknown>)])?.mid;
   const pA0 = stA0?.price as { sats?: number; tokens?: number } | null | undefined;
@@ -1182,8 +1184,14 @@ try {
   await x.exchange.idle();
   const dtm = await getJson(`/@${DISCOVERY}/1color/listTopicManagers`), dls = await getJson(`/@${DISCOVERY}/1color/listLookupServiceProviders`);
   check(!!dOn && "tm_color" in (dtm ?? {}) && "ls_color" in (dls ?? {}), `discovery {on:true}: started, serves ${Object.keys(dtm ?? {}).join(", ")} · ${Object.keys(dls ?? {}).join(", ")}`);
-  const sub = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify(["tm_color"]) }, body: Uint8Array.from(dA.toBEEF()) });
+  // 0.21.0: the door holds a submission until its verdict; 60 s here so a missing verdict is a FAIL, not the end of the run.
+  const sub = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify(["tm_color"]) }, body: Uint8Array.from(dA.toBEEF()), signal: AbortSignal.timeout(60_000) }).catch((e: Error) => ({ status: 0, text: async () => `no answer in 60 s (${e.name})` }));
   check(sub.status === 200, `bare-host POST /submit X-Topics tm_color: routed to discovery (${sub.status} ${(await sub.text()).slice(0, 120)})`);
+  if (sub.status !== 200) {
+    // What discovery's facts say of the deploy (the verdict the door waits on; the chain's status).
+    const tx = dA.id("hex");
+    for (const n of [`1color/topic/tx/${tx}`, `chain/tx/${tx}`, ...dA.inputs.map((i) => `chain/tx/${i.sourceTXID ?? i.sourceTransaction?.id("hex")}`)]) process.stdout.write(`  discovery ${n}: ${(await get(`/@${DISCOVERY}/events/${n}?latest=1`)).text.slice(0, 1500)}\n`);
+  }
   await send({ fn: "discovery", args: { on: false } });
   const dOff = await until("discovery stopped", async () => (await get(`/@${DISCOVERY}/1color/listTopicManagers`)).status === 404 ? true : undefined);
   check(!!dOff && JSON.parse((await get(`/@${SWAP}/amm/discovery`)).text).on === false, "discovery {on:false}: stopped (404)");
@@ -1193,7 +1201,7 @@ try {
   { const rowsD = await getJson(`/@${DISCOVERY}/1color/tokens?ids=${A}`) as Array<{ amount?: number; height?: number | null }> | undefined; check(rowsD?.[0]?.amount === 21_000_000 && rowsD[0].height === hA, `discovery's A row (0.13.0, D5): amount ${rowsD?.[0]?.amount}, height ${rowsD?.[0]?.height} (A's deploy mined at ${hA})`); }
   // 0.15.1 (skein-1color 0.16.0): the list's search (q: symbol or token id STARTS WITH) and cursor (after=<tokenId>).
   {
-    const subP = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify(["tm_color"]) }, body: Uint8Array.from(dP.toBEEF()) });
+    const subP = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify(["tm_color"]) }, body: Uint8Array.from(dP.toBEEF()), signal: AbortSignal.timeout(60_000) }).catch(() => ({ status: 0 }));
     check(subP.status === 200, `P's deploy submitted to tm_color (${subP.status})`);
     type Row = { tokenId: string; sym: string };
     const full = await until("discovery lists A and P", async () => { const l = await getJson(`/@${DISCOVERY}/1color/tokens`) as Row[] | undefined; return l && l.length >= 2 && l.some((r) => r.tokenId === P) ? l : undefined; }) ?? [];

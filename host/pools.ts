@@ -295,14 +295,16 @@ export class Pools {
       }
       if (route === POOLS_HISTORY_ROUTE) {
         const op = q.get("outpoint");
+        const f = await this.fold(handle);
         let start: { poolId: string; place: string } | null = null;
         if (op !== null) {
-          // A wallet's pool output `<txid>_<vout>` (today's form); the recognizer names outputs `<txid>.<vout>`.
+          // A wallet's pool output `<txid>_<vout>` (the recognizer names outputs `<txid>.<vout>`): its pool and the
+          // place of the standing hop that made it (its `amm/output/<op>` row comes in the same step, BEFORE that hop
+          // row, so "strictly after the output" is strictly after the hop).
           const m = /^([0-9a-f]{64})[_.](\d+)$/.exec(op);
           if (!m) return problem(400, "outpoint: <txid>_<vout>");
-          const got = await latestDelivered(this.router, handle, `amm/output/${m[1]}.${m[2]}`).catch(() => undefined);
-          const pid = got && typeof got.rec.poolId === "string" ? got.rec.poolId : undefined;
-          if (got && pid) start = { poolId: pid, place: got.place };
+          const made = f.hops.find((h) => h.outpoint === `${m[1]}_${m[2]}`);
+          if (made) start = { poolId: made.poolId, place: made.place };
         }
         return jsonAnswer(200, poolHistory(await this.fold(handle), q, start), { "cache-control": CACHE });
       }
