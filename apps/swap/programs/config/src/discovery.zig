@@ -36,9 +36,13 @@ pub fn record(a: Allocator, on: bool, at: u64) !Value {
     }) };
 }
 
-/// The event: `{event: "discovery-on"}` or `{event: "discovery-off"}`.
+/// The event (0.21.0): `amm/discovery` `{on}`.
+pub const event_name = "amm/discovery";
 pub fn event(a: Allocator, on: bool) !Value {
-    return .{ .map = try a.dupe(cbor.Entry, &.{.{ .key = "event", .value = .{ .text = if (on) "discovery-on" else "discovery-off" } }}) };
+    return .{ .map = try a.dupe(cbor.Entry, &.{
+        .{ .key = "event", .value = .{ .text = event_name } },
+        .{ .key = "on", .value = .{ .boolean = on } },
+    }) };
 }
 
 /// The `/discovery` answer's JSON: `{on, since}`, or `{"on":false}` with no record.

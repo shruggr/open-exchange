@@ -134,15 +134,16 @@ test "the enable list: enabled (the BEEF kept as deploy, never read out) or disa
     try testing.expect(std.meta.stringToEnum(tokens.Status, "creating") == null and std.meta.stringToEnum(tokens.Status, "failed") == null);
 }
 
-test "the events: token-enabled {tokenId, beef, terms?, market?} (the defaults at the step); token-disabled {tokenId}" {
+test "the events (0.21.0): amm/token/<id> {state enabled, tokenId, beef, terms?, market?} (the defaults at the step); {state disabled, tokenId}" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const plain = try tokens.enabledEvent(a, "aa_0", "BEEF", null);
-    try testing.expectEqualStrings("token-enabled", plain.getText("event").?);
+    try testing.expectEqualStrings("amm/token/aa_0", plain.getText("event").?);
+    try testing.expectEqualStrings("enabled", plain.getText("state").?);
     try testing.expectEqualStrings("aa_0", plain.getText("tokenId").?);
     try testing.expectEqualStrings("BEEF", plain.getBytes("beef").?);
-    try testing.expectEqual(@as(usize, 3), plain.map.len);
+    try testing.expectEqual(@as(usize, 4), plain.map.len);
     const df = (try tokens.withDefaults(a, null, try dagjsonValue(a, "{\"terms\":{\"lpFeeBps\":30,\"validatorFeeBps\":5,\"commissionBps\":25},\"market\":{\"minCommissionBps\":1}}"))).ok;
     const with = try tokens.enabledEvent(a, "aa_0", "BEEF", df);
     try testing.expectEqual(@as(u64, 25), with.get("terms").?.getUint("commissionBps").?);
@@ -152,9 +153,10 @@ test "the events: token-enabled {tokenId, beef, terms?, market?} (the defaults a
     const m = try tokens.enabledEvent(a, "aa_0", "BEEF", only);
     try testing.expect(m.get("terms") == null and m.get("market") != null);
     const off = try tokens.disabledEvent(a, "aa_0");
-    try testing.expectEqualStrings("token-disabled", off.getText("event").?);
+    try testing.expectEqualStrings("amm/token/aa_0", off.getText("event").?);
+    try testing.expectEqualStrings("disabled", off.getText("state").?);
     try testing.expectEqualStrings("aa_0", off.getText("tokenId").?);
-    try testing.expectEqual(@as(usize, 2), off.map.len);
+    try testing.expectEqual(@as(usize, 3), off.map.len);
 }
 
 test "terms: a token on the list → the event token-terms {tokenId, terms}; null = market only; unknown token or bad terms refused" {
@@ -168,7 +170,7 @@ test "terms: a token on the list → the event token-terms {tokenId, terms}; nul
     const rows = tokens.rowsOf(rec);
     const good = (try tokens.termsChange(a, rows, try dagjsonValue(a, "{\"tokenId\":\"" ++ id ++ "\",\"terms\":{\"lpFeeBps\":40,\"validatorFeeBps\":6,\"commissionBps\":2}}"))).ok;
     const ev = try tokens.termsEvent(a, good.token_id, good.terms);
-    try testing.expectEqualStrings("token-terms", ev.getText("event").?);
+    try testing.expectEqualStrings("amm/token-terms/" ++ id, ev.getText("event").?);
     try testing.expectEqualStrings(id, ev.getText("tokenId").?);
     try testing.expectEqual(@as(u64, 40), ev.get("terms").?.getUint("lpFeeBps").?);
     try testing.expectEqual(@as(u64, 6), ev.get("terms").?.getUint("validatorFeeBps").?);
@@ -304,9 +306,10 @@ test "discovery: {on} → the record {on, since} and the event discovery-on / di
     const on = try discovery.record(a, true, 100);
     try testing.expectEqualStrings("{\"on\":true,\"since\":100}", try discovery.json(a, on));
     try testing.expectEqualStrings("{\"on\":false,\"since\":200}", try discovery.json(a, try discovery.record(a, false, 200)));
-    try testing.expectEqualStrings("discovery-on", (try discovery.event(a, true)).getText("event").?);
-    try testing.expectEqualStrings("discovery-off", (try discovery.event(a, false)).getText("event").?);
-    try testing.expectEqual(@as(usize, 1), (try discovery.event(a, true)).map.len);
+    try testing.expectEqualStrings("amm/discovery", (try discovery.event(a, true)).getText("event").?);
+    try testing.expect((try discovery.event(a, true)).get("on").?.boolean);
+    try testing.expect(!(try discovery.event(a, false)).get("on").?.boolean);
+    try testing.expectEqual(@as(usize, 2), (try discovery.event(a, true)).map.len);
     try testing.expectEqualStrings(discovery.head, "amm/discovery");
 }
 
@@ -323,7 +326,7 @@ test "the claim: the first one recorded {claimant, since} and the event claimed 
     try testing.expectEqualSlices(u8, &key, claim.claimantOf(rec).?);
     try testing.expectEqualStrings("{\"claimant\":\"" ++ khex ++ "\",\"since\":500}", try claim.json(a, rec));
     const ev = try claim.event(a, &key);
-    try testing.expectEqualStrings("claimed", ev.getText("event").?);
+    try testing.expectEqualStrings("amm/claim", ev.getText("event").?);
     try testing.expectEqualStrings(khex, ev.getText("claimant").?);
     try testing.expectEqual(@as(usize, 2), ev.map.len);
     try testing.expectEqualStrings(khex, (try claim.result(a, &key)).getText("claimant").?);

@@ -53,10 +53,11 @@ pub fn record(a: Allocator, claimant: []const u8, at: u64) !Value {
     }) };
 }
 
-/// The event: `{event: "claimed", claimant: <hex>}`.
+/// The event (0.21.0): `amm/claim` `{claimant: <hex>}`.
+pub const event_name = "amm/claim";
 pub fn event(a: Allocator, claimant: []const u8) !Value {
     return .{ .map = try a.dupe(cbor.Entry, &.{
-        .{ .key = "event", .value = .{ .text = "claimed" } },
+        .{ .key = "event", .value = .{ .text = event_name } },
         .{ .key = "claimant", .value = .{ .text = try hex(a, claimant) } },
     }) };
 }

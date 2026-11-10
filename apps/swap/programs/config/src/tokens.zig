@@ -279,13 +279,23 @@ pub fn defaultsJson(a: Allocator, rec: ?Value, enable_price: ?u64) ![]const u8 {
 
 // ---------------------------------------------------------------- the events
 
-/// `{event: "token-enabled", tokenId, beef, terms?, market?}` (shruggr/skein#164): root's enable as
+/// The event names (0.21.0; skein >= 0.5.0 indexes an app's events under its own name, the swap app's is `amm`):
+/// ONE name per item, its latest event the item's current state.
+pub fn tokenEventName(a: Allocator, token_id: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "amm/token/{s}", .{token_id});
+}
+pub fn termsEventName(a: Allocator, token_id: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "amm/token-terms/{s}", .{token_id});
+}
+
+/// `amm/token/<tokenId>` `{state: "enabled", tokenId, beef, terms?, market?}` (shruggr/skein#164): root's enable as
 /// a fact for the host — the deploy's Atomic BEEF (the door's wire bytes) and the defaults at this
 /// step (`terms`, `market` when set).
 pub fn enabledEvent(a: Allocator, token_id: []const u8, beef_wire: []const u8, defaults: ?Value) !Value {
     var es: std.ArrayList(cbor.Entry) = .empty;
     try es.appendSlice(a, &.{
-        .{ .key = "event", .value = .{ .text = "token-enabled" } },
+        .{ .key = "event", .value = .{ .text = try tokenEventName(a, token_id) } },
+        .{ .key = "state", .value = .{ .text = "enabled" } },
         .{ .key = "tokenId", .value = .{ .text = token_id } },
         .{ .key = "beef", .value = .{ .bytes = beef_wire } },
     });
@@ -293,19 +303,20 @@ pub fn enabledEvent(a: Allocator, token_id: []const u8, beef_wire: []const u8, d
     return .{ .map = es.items };
 }
 
-/// `{event: "token-disabled", tokenId}`.
+/// `amm/token/<tokenId>` `{state: "disabled", tokenId}`.
 pub fn disabledEvent(a: Allocator, token_id: []const u8) !Value {
     return map(a, &.{
-        .{ .key = "event", .value = .{ .text = "token-disabled" } },
+        .{ .key = "event", .value = .{ .text = try tokenEventName(a, token_id) } },
+        .{ .key = "state", .value = .{ .text = "disabled" } },
         .{ .key = "tokenId", .value = .{ .text = token_id } },
     });
 }
 
-/// `{event: "token-terms", tokenId, terms}` (0.12.0): root's terms for one token as a fact for the
+/// `amm/token-terms/<tokenId>` `{tokenId, terms}` (0.12.0): root's terms for one token as a fact for the
 /// host, which sends them to the token instance as root's `terms` message (`terms` a map or null).
 pub fn termsEvent(a: Allocator, token_id: []const u8, terms: Value) !Value {
     return map(a, &.{
-        .{ .key = "event", .value = .{ .text = "token-terms" } },
+        .{ .key = "event", .value = .{ .text = try termsEventName(a, token_id) } },
         .{ .key = "tokenId", .value = .{ .text = token_id } },
         .{ .key = "terms", .value = terms },
     });

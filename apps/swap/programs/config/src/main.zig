@@ -12,26 +12,26 @@
 //!                       envelope; the wire read back, chain.record.wireOf) must be the token id's
 //!                       deploy (tokens.zig `deployOf`); `beef` may be left out for a token already
 //!                       on the list (its kept `deploy`). The row `enabled` (since now, the BEEF kept
-//!                       as `deploy`) and the event `{event: "token-enabled", tokenId, beef, terms?,
-//!                       market?}` (the defaults at this step). An enabled token enabled again: the
+//!                       as `deploy`) and the event `amm/token/<tokenId>` (0.21.0) `{state: "enabled", tokenId, beef,
+//!                       terms?, market?}` (the defaults at this step). An enabled token enabled again: the
 //!                       same fact again (the host's reaction is idempotent).
 //!     {fn: "disable", args: {tokenId}}   a token on the list: the row `disabled`, the event
-//!                       `{event: "token-disabled", tokenId}`.
+//!                       `amm/token/<tokenId>` `{state: "disabled", tokenId}`.
 //!     {fn: "terms", args: {tokenId, terms}}   a token on the list (enabled or disabled); `terms`
 //!                       `{lpFeeBps, validatorFeeBps, commissionBps, minLegSats?}` (checked as the defaults' are)
-//!                       or null (market only): the event `{event: "token-terms", tokenId, terms}`
+//!                       or null (market only): the event `amm/token-terms/<tokenId>` `{tokenId, terms}`
 //!                       (the host sends it to the token instance as root's `terms`); nothing kept
 //!                       here: the token instance's `amm/terms` is the record (0.12.0).
 //!     {fn: "defaults", args: {terms?, market?}}   the head `amm/defaults` (tokens.zig `withDefaults`).
 //!     {fn: "discovery", args: {on}}   the head `amm/discovery` `{on, since}` and the event
-//!                       `discovery-on` / `discovery-off` (discovery.zig).
+//!                       `amm/discovery` `{on}` (discovery.zig).
 //!     {fn: "price", args: {sats | null}}   (0.15.0) the price to enable a token: the head
 //!                       `amm/enable-price` (null: off); `enable-check` reads it (0.15.3: no event) (paid.zig).
 //!     (0.21.0: no `withdraw` — no collecting in this rebuild, HANDOFF-2026-11-09 WALLET + SIGNER
 //!                       "SCOPE": refused as an unknown fn.)
 //!   box `amm/claim` (kernel.beef; its function `claim` gated by no role: any sender; claim.zig):
 //!     {fn: "claim"}   the first: the head `amm/claim` `{claimant: <the sender>, since}` and the
-//!                       event `{event: "claimed", claimant: <hex>}` (the host grants it amm.admin);
+//!                       event `amm/claim` `{claimant: <hex>}` (the host grants it amm.admin);
 //!                       answered `{fn: "claim", result: {claimant: <hex>}}`. A later one: refused
 //!                       (`claimed`), nothing written, no event.
 //!     Each answered to the sender in that box: `{fn, request, replyTo, result | error}`. A body
