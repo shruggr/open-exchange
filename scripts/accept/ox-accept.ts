@@ -26,7 +26,7 @@
 //                          named → 402 with the price; no deploy → 400; too small → 402; a wrong key → 400; a good
 //                          bundle → enabled with the default terms, the coin in swap's wallet (sent on by its
 //                          internalize); the same payment for another token → 409; a second request → 409; disabled by
-//                          the admin → 409; the admin's withdraw (0.15.2) → a payment handed over unsent
+//                          the admin → 409 (0.21.0: no withdraw, no /amm/wallet)
 //   discovery off / on   → stopped / started; (0.15.1) the list's q (symbol / token id prefix) and after (paging)
 //   restart the host     → reconcile creates nothing and starts what swap says
 //   history (0.13.0; 0.14.0) → a second token B from the token app's own fixtures (src/fixtures/vectors.zig: its deploy,
@@ -69,6 +69,7 @@ import { DISCOVERY, SWAP } from "../../host/exchange.ts";
 import { load, OX_ROOT, skein, SWAP_APP_DIR, swapAppVersion } from "../../host/skein.ts";
 import { firstRun, main, settings, startExchange, type Env, type Running } from "../../host/cli.ts";
 import { changeBps, marketCandles, mergeStats, poolState } from "../../host/pools.ts";
+import { commissionPkhFor } from "../../host/relay.ts";
 import { priceOf } from "@dcasegr/amm-engine";
 
 type Sdk = typeof import("@bsv/sdk");
@@ -483,13 +484,13 @@ try {
   check(!!listed, `ls_amm_<A> {tokenId} lists P0, P1 and P2 (${listed?.length ?? 0})`);
   const p0 = `${pools[0]!.id("hex")}_0`;
   const g2 = await fetch(p2);
-  const b2 = await g2.json().catch(() => ({})) as { market?: { minCommissionBps?: unknown; commissionPkh?: unknown }; validators?: Array<{ identity?: string; peerId?: string }>; pools?: Array<Record<string, unknown>> };
+  const b2 = await g2.json().catch(() => ({})) as { market?: { minCommissionBps?: unknown; identityKey?: unknown }; validators?: Array<{ identity?: string; peerId?: string }>; pools?: Array<Record<string, unknown>> };
   check(g2.status === 200 && g2.headers.get("cache-control") === "public, max-age=5", `GET /@<A>/amm/pools: 200, cache-control ${g2.headers.get("cache-control")}`);
   check(b2.pools?.length === 1 && b2.pools[0]!.outpoint === p0, `…only P0: P1 (validator not beating) and P2 (commission 1 < the market's 2) absent (${JSON.stringify(b2.pools?.map((p) => p.outpoint))})`);
   const row0 = b2.pools?.[0];
   check(!!row0 && row0.validatorIdentityKey === SHARED && row0.validatorPeerId === (liveT?.[0] as { from?: string } | undefined)?.from && row0.lpPubKey === lps[0] && row0.commissionBps === 25, `…P0's row: validator ${String(row0?.validatorIdentityKey).slice(0, 8)}…, peer ${String(row0?.validatorPeerId).slice(0, 12)}…, lpPubKey ${row0?.lpPubKey === lps[0] ? "its LP key" : String(row0?.lpPubKey)} (${JSON.stringify(row0)})`);
   check(!!row0 && row0.poolId === p0 && row0.swaps === 0, `…P0's pool id is its deploy outpoint, swaps 0 (0.14.0; poolId ${String(row0?.poolId)}, swaps ${String(row0?.swaps)})`);
-  check(b2.market?.minCommissionBps === 2 && typeof b2.market.commissionPkh === "string", `…the market: ${JSON.stringify(b2.market)}`);
+  check(b2.market?.minCommissionBps === 2 && b2.market.identityKey === x.db.get(A)?.identity && !("commissionPkh" in b2.market), `…the market (0.21.0): A's identity key, no fixed commissionPkh: ${JSON.stringify(b2.market)}`);
   const vs = (b2.validators ?? []) as Array<{ identity?: string; peerId?: string; minLegSats?: number }>;
   check(vs.some((v) => v.identity === SHARED && v.peerId === (liveT?.[0] as { from?: string } | undefined)?.from) && !vs.some((v) => v.identity === stranger.toPublicKey().toString()), `…validators: the beating one (the host key, its peer ID), not the stranger (${JSON.stringify(vs.map((v) => `${String(v.identity).slice(0, 8)}…/${String(v.peerId).slice(0, 12)}…`))})`);
   // The beat carries the terms once the instance re-declares its beacons with them (a beat on the host's timer).
@@ -699,166 +700,6 @@ try {
     }
   }
 
-  // ------------------------------------------------ reindex at start (0.20.1; skein-overlay 0.23.0, skein-amm 0.48.1 D5–D7)
-  // B indexed under the OLD shape: a host of its own whose token image is skein-amm v0.47.0 (a copy of this
-  // package's image/ with only the token app's tarball changed), B's deploy, pool and two swaps admitted there.
-  // Then the same home started with this package's images: the host installs skein-amm 0.48.1 into B in place and,
-  // its lookupVersion 1 greater than 0.47.0's none, sends root's reindex for ls_amm_<B> and ls_color_<B>. A
-  // second reindex of ls_amm_<B> is sent the moment the host says the reindex started; the LP's Close after the switch.
-  // Then B's pool reads answer what the main host's FRESH 0.48.1 index answers for the same five transactions (times
-  // aside: a re-run stamps its own step's time, as a fresh index stamps its own); the Close is in them; the second
-  // reindex was refused (root's answer in B's log, one run recorded); B's amm/terms and wallet heads untouched.
-  {
-    const strip = (v: unknown): unknown => Array.isArray(v) ? v.map(strip) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => !/(^at$|At$|^since$|^next$)/.test(k)).map(([k, y]) => [k, strip(y)])) : v;
-    const reads = [
-      `/@${B}/amm/pools/history?from=0`, `/@${B}/amm/trades`, `/@${B}/amm/trades?txid=${ftx.get("swap_bsv_in")!.id("hex")}`,
-      `/@${B}/amm/positions?pool=${poolB}`, `/@${B}/amm/stats`, `/@${B}/amm/color/${B}/holders`, `/@${B}/amm/fees/validator?id=${SHARED}`,
-    ];
-    const fresh = new Map<string, string>();
-    for (const q of reads) fresh.set(q, JSON.stringify(strip(await getJson(q))));
-    check([...fresh.values()].every((v) => v !== "null" && v !== undefined), `reindex: the main host's fresh 0.48.1 index answers every read compared (${reads.length})`);
-    // The old images: this package's image/ with the token app at skein-amm v0.47.0 (swap's ../../apps/swap a link to the package's).
-    const oldRoot = mkdtempSync(join(tmpdir(), "ox-accept-images-047-"));
-    cpSync(join(OX_ROOT, "image"), join(oldRoot, "image"), { recursive: true });
-    mkdirSync(join(oldRoot, "apps"), { recursive: true });
-    symlinkSync(join(OX_ROOT, "apps", "swap"), join(oldRoot, "apps", "swap"));
-    const tokenApps = join(oldRoot, "image", "token", "etc", "apps.json");
-    const ta = JSON.parse(readFileSync(tokenApps, "utf8")) as { install: Array<string | { url: string; hash: string }> };
-    ta.install = ta.install.map((e) => typeof e === "object" && /skein-amm/.test(e.url) ? { url: "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.47.0.tar.gz", hash: "f41cb56f74cf90e268ebad3dffe9014a3110388f" } : e);
-    writeFileSync(tokenApps, `${JSON.stringify(ta, null, 2)}\n`);
-    const oldImages = join(oldRoot, "image");
-    const home4 = mkdtempSync(join(tmpdir(), "ox-accept-reindex-"));
-    writeFileSync(join(home4, "key"), `${shared.toHex()}\n`, { mode: 0o600 });
-    const port4 = await freePort(), hostPort4 = await freePort(), p2pPort4 = await freePort();
-    writeFileSync(join(home4, "host.env"), [
-      `SKEIN_KEY_FILE=${join(home4, "key")}`,
-      ...(ROCKS ? [`SKEIN_STORE_ROCKSDB=${join(home4, "store-rocksdb")}`] : FILE ? [] : [`SKEIN_STORE_SQLITE=${join(home4, "store.sqlite")}`]),
-      `SKEIN_ROOT_INSTANCE=${SWAP}`, "SKEIN_NETWORK=regtest", `SKEIN_ROUTER_PORT=${port4}`, `SKEIN_HOST_PORT=${hostPort4}`, `SKEIN_HEADERS_URL=${feedUrl}`,
-      `SKEIN_ARC_URL=${arcade.url}`, "SKEIN_ARC_TOKEN=t", `SKEIN_ARC_EVENTS_URL=${arcade.eventsUrl}`, `SKEIN_LIBP2P_LISTEN=/ip4/127.0.0.1/tcp/${p2pPort4}`,
-      ...(kernel ? [`SKEIN_KERNEL_BIN=${kernel}`] : []), "",
-    ].join("\n"));
-    const lines4: string[] = [];
-    const env4: Env = { vars: { HOME: process.env.HOME, PATH: process.env.PATH, SKEIN_HOME: home4 }, out: (l) => { lines4.push(l); if (process.env.VERBOSE || process.env.VERBOSE_REINDEX) process.stdout.write(`  4| ${l}\n`); }, err: (l) => { lines4.push(`ERR ${l}`); process.stdout.write(`  4! ${l}\n`); } };
-    const R4 = `http://127.0.0.1:${port4}`;
-    const get4 = async (path: string) => { const r = await fetch(`${R4}${path}`); return r.status === 200 ? await r.json() as unknown : undefined; };
-    const submit4 = async (n: string) => (await fetch(`${R4}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmB]) }, body: Uint8Array.from(ftx.get(n)!.toBEEF()) })).status;
-    const ammB = `ls_amm_${B}`, colorB = `ls_color_${B}`;
-    let z: Running | undefined;
-    try {
-      const fr4 = await firstRun(sk, env4);
-      check(!fr4.failed, `reindex host: the first run (${fr4.made.join("; ")})`);
-      if (ROCKS) await sleep(1500);
-      // Phase 1: the token instances from the OLD images (and the host comparing against them: nothing to update).
-      const old = settings(sk, env4);
-      old.vars.SKEIN_IMAGES_DIR = oldImages;
-      z = await startExchange(sk, old, { imagesDir: oldImages });
-      await z.exchange.idle();
-      await until("the reindex host's chain at the fixtures' roots", async () => { const t = await (await z!.host.router.hydrate(SWAP)).kernel.chainTip(); return t && t.height >= topH ? t : undefined; });
-      // Defaults first, so B is born with terms (amm/terms: a head the reindex must leave as it is).
-      await z.exchange.rootMessage(SWAP, "amm/admin", { fn: "defaults", args: { terms: { lpFeeBps: 30, validatorFeeBps: 5, commissionBps: 25 } } });
-      await until("the reindex host's defaults", async () => ((await get4(`/@${SWAP}/amm/defaults`)) as { terms?: unknown } | undefined)?.terms ? true : undefined);
-      await z.exchange.rootMessage(SWAP, "amm/admin", { fn: "enable", args: { tokenId: B, beef: Uint8Array.from(ftx.get("token_deploy")!.toAtomicBEEF()) } });
-      check(!!(await until("/@B/amm/token on the reindex host", async () => (await fetch(`${R4}/@${B}/amm/token`)).status === 200 ? true : undefined, 60_000)), "reindex host: B enabled from the old image");
-      await z.exchange.idle();
-      const kB = (await z.host.router.hydrate(B)).kernel;
-      const appOld = await kB.store.get(await kB.call("head", "amm/app") as never) as unknown as { version?: string; lookupVersion?: number };
-      check(appOld.version === "0.47.0" && appOld.lookupVersion === undefined, `…B runs skein-amm ${appOld.version} (no lookupVersion: the old shape)`);
-      for (const n of ["pool_deploy", "swap_bsv_in", "swap_tokens_in"]) {
-        const st = await submit4(n);
-        const ok = await until(`reindex host: ${n} admitted`, async () => ((await get4(`/@${B}/amm/spends?outpoint=${ftx.get(n)!.inputs[0]!.sourceTXID}.${ftx.get(n)!.inputs[0]!.sourceOutputIndex}`)) as { spentBy?: string } | undefined)?.spentBy === ftx.get(n)!.id("hex") ? true : undefined, 30_000);
-        check(st === 200 && !!ok, `…${n} admitted under 0.47.0 (${st})`);
-      }
-      await until("B's three admitted transactions settled", async () => { await kB.idle(); return true; });
-      const headOf = async (k: typeof kB, h: string) => String(await k.call("head", h) ?? "");
-      const wHeads = async (k: typeof kB) => { const out: string[] = []; for (const h of ["amm/terms", "amm/market", "wallet/state"]) out.push(`${h}=${await headOf(k, h)}`); return out.join(" "); };
-      const keptBefore = await wHeads(kB);
-      await z.stop();
-      z = undefined;
-      if (ROCKS) await sleep(1500);
-
-      // Phase 2: this package's images. The host installs 0.48.1 into B and reindexes its two lookups.
-      const t0 = Date.now();
-      z = await startExchange(sk, settings(sk, env4));
-      let started = false;
-      for (const end = Date.now() + 180_000; !started && Date.now() < end; await sleep(10)) started = lines4.some((l) => l.includes(`${B}: reindex ${ammB} started`));
-      // Beside it, at once: a second reindex of the same service (refused: in progress).
-      // NOT here (a blocker, plans/reindex-2026-11-07.md REPORT): a swap admitted DURING the reindex. The live hooks are
-      // 0.48.1's and the live index is 0.47.0's shape: amm-lookup's `spent` fails BadIndex on its old records, the
-      // admission step errors and the transaction stays pending (resubmissions 503). The Close goes in after the switch.
-      const entriesBefore = await (async () => { const st = sk.stores.openStoreFile(sk.indexStore.storeSpec(z!.db.get(B)!), { readOnly: true }); try { let n = 0; for await (const _e of st.log.entries(0)) n++; return n; } finally { st.close(); } })();
-      await z.exchange.rootMessage(B, "amm/reindex", { fn: "reindex", args: { service: ammB } });
-      const kB2 = (await z.host.router.hydrate(B)).kernel;
-      const rec = async () => { const c = await kB2.call("head", "amm/reindex"); return c ? await kB2.store.get(c as never) as unknown as { running?: Record<string, { thread?: unknown }>; last?: Record<string, Record<string, unknown>> } : undefined; };
-      await z.exchange.reindexed();
-      const closeSent = Date.now();
-      let closeStatus = await submit4("close"), polls = 0;
-      // BRC-22's 503 (undecided within the host's bound): resubmitted, as a client polls the same flow.
-      while (closeStatus === 503 && polls++ < 60) { await sleep(500); closeStatus = await submit4("close"); }
-      // The refusal: the engine's answer to root `{fn: "reindex", error: {code: "bad-args", message: "reindex in progress"}}`
-      // (root is the instance's own key here: the answer comes back into the instance as a message of its log).
-      const refusal = await (async () => {
-        const st = sk.stores.openStoreFile(sk.indexStore.storeSpec(z!.db.get(B)!), { readOnly: true });
-        try {
-          const seen = new Set<string>();
-          const look = async (v: unknown, depth: number): Promise<string | undefined> => {
-            if (depth > 6 || v == null) return undefined;
-            if (v instanceof Uint8Array) { try { return await look(sk.cid.decode(v), depth + 1); } catch { return undefined; } }
-            if (typeof v !== "object") return undefined;
-            const o = v as Record<string, unknown> & { multihash?: unknown; code?: number };
-            if (o.multihash && typeof (o as { toString(): string }).toString === "function" && "code" in o) {
-              const k = String(o);
-              if (seen.has(k)) return undefined;
-              seen.add(k);
-              return await look(await st.get(o as never).catch(() => undefined), depth + 1);
-            }
-            if (Array.isArray(v)) { for (const x of v) { const r = await look(x, depth + 1); if (r) return r; } return undefined; }
-            const err = o.error as { code?: string; message?: string } | undefined;
-            if (o.fn === "reindex" && err && typeof err.message === "string") return `${err.code}: ${err.message}`;
-            for (const x of Object.values(o)) { const r = await look(x, depth + 1); if (r) return r; }
-            return undefined;
-          };
-          let n = 0;
-          for await (const { entry } of st.log.entries(0)) { if (n++ < entriesBefore) continue; const r = await look(entry, 0); if (r) return r; }
-          return undefined;
-        } finally { st.close(); }
-      })();
-      const tDone = Date.now();
-      check(!!started && lines4.some((l) => l.includes(`${B}: amm updated to 0.48.1 (from 0.47.0`)), `the restart on this package's images: B's token app installed in place, 0.47.0 → 0.48.1 (${lines4.find((l) => l.includes(`${B}: amm updated`))?.replace(/^\[open-exchange\] /, "")})`);
-      const doneAmm = lines4.find((l) => l.includes(`${B}: reindex ${ammB} done`)), doneColor = lines4.find((l) => l.includes(`${B}: reindex ${colorB} done`));
-      check(!!doneAmm && !!doneColor && lines4.some((l) => l.includes(`${B}: reindex ${colorB} started (lookupVersion 0 → 1)`)), `…root's reindex of ls_amm_<B> and ls_color_<B> (lookupVersion 0 → 1), both done: ${doneAmm?.replace(/^.*reindex /, "")} · ${doneColor?.replace(/^.*reindex /, "")} (${tDone - t0} ms from the start)`);
-      check(!lines4.some((l) => /reindex .* error/.test(l)) && !lines4.some((l) => l.includes(`${DISCOVERY}: 1color updated`)), "…no reindex error; discovery (born on this package's image) left as it is");
-      const r2 = await rec();
-      const last = r2?.last?.[ammB];
-      check(refusal === "bad-args: reindex in progress" && !r2?.running?.[ammB] && Number(last?.steps) === Number(last?.transactions) + 2, `…the second reindex sent while it ran was refused (root answered ${refusal ?? "nothing found"}); one run recorded (${JSON.stringify(last)})`);
-      check(closeStatus === 200, `…the Close submitted after the switch (${closeSent - t0} ms after the restart: ${closeStatus}${polls ? `, after ${polls} resubmission(s) of a 503` : ""})`);
-      await until("the Close in B's history", async () => ((await get4(`/@${B}/amm/pools/history?from=0`)) as { events?: Array<{ kind?: string }> } | undefined)?.events?.some((e) => e.kind === "close") ? true : undefined, 30_000);
-      const closeEvent = ((await get4(`/@${B}/amm/pools/history?from=0`)) as { events?: Array<{ kind?: string; at?: number }> } | undefined)?.events?.find((e) => e.kind === "close");
-      const during = closeEvent && last ? Number(closeEvent.at) <= Number(last.to) : false;
-      check(!!closeEvent && !during, `…the Close is in the switched index, written by the live hooks after the switch (admitted at ${String(closeEvent?.at)}, the switch at ${String(last?.to)})`);
-      let same = 0;
-      for (const q of reads) {
-        const got = JSON.stringify(strip(await get4(q)));
-        if (got === fresh.get(q)) same++; else process.stdout.write(`  reindexed ${q}:\n    ${got.slice(0, 400)}\n  fresh:\n    ${fresh.get(q)?.slice(0, 400)}\n`);
-      }
-      check(same === reads.length, `…B's reads after the reindex answer what the main host's fresh index answers, times aside (${same}/${reads.length}: history, trades, a trade by txid, positions, stats, holders, validator fees)`);
-      check(await wHeads(kB2) === keptBefore, `…B's amm/terms and wallet heads untouched (${keptBefore.replace(/=\S{40,}/g, "=<cid>").slice(0, 160)})`);
-      check(JSON.stringify(await get4(`/@${SWAP}/amm/wallet`)) === JSON.stringify(await get4(`/@${SWAP}/amm/wallet`)) && !!(await get4(`/@${SWAP}/amm/wallet`)), "…swap's wallet read as before (the reindex is the token instance's lookups only)");
-      // A restart now: nothing to update, nothing reindexed again.
-      await z.stop();
-      z = undefined;
-      if (ROCKS) await sleep(1500);
-      const n4 = lines4.length;
-      z = await startExchange(sk, settings(sk, env4));
-      await z.exchange.idle();
-      await z.exchange.reindexed();
-      check(!lines4.slice(n4).some((l) => / reindex | updated to /.test(l)), "a restart after it: nothing updated, nothing reindexed");
-    } finally {
-      await z?.stop().catch(() => {});
-      if (ROCKS) await sleep(1500);
-      if (!process.env.KEEP) { rmSync(home4, { recursive: true, force: true }); rmSync(oldRoot, { recursive: true, force: true }); }
-    }
-  }
-
   // ------------------------------------------------ the host is the relay (0.17.0; skein-amm 0.44.0): one swap in flight per pool
   // Two, then three, swaps on ONE pool output, relayed at once through the HOST's relay (host/relay.ts `Relay.swap`,
   // what POST /@<B>/amm/swap runs; the validator this node: its inbound frame) before either is admitted: the validator
@@ -886,7 +727,7 @@ try {
     const R3 = `http://127.0.0.1:${port3}`;
     const get3 = async (path: string) => { const r = await fetch(`${R3}${path}`); return r.status === 200 ? await r.json() as unknown : undefined; };
     let z: Running | undefined;
-    let xh: { run: Running; home: string; R: string; com: string } | undefined;
+    let xh: { run: Running; home: string; R: string; id: string } | undefined;
     try {
       const fr3 = await firstRun(sk, env3);
       check(!fr3.failed, `race host (${n}): the first run (${fr3.made.join("; ")})`);
@@ -901,7 +742,7 @@ try {
       check(!!(await until("/@B/amm/token on the race host", async () => (await fetch(`${R3}/@${B}/amm/token`)).status === 200 ? true : undefined, 60_000)), "race host: terms set, B enabled by root");
       await z.exchange.idle();
       const st3 = (await fetch(`${R3}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmB]) }, body: Uint8Array.from(ftx.get("pool_deploy")!.toBEEF()) })).status;
-      type PoolsB = { market?: { commissionPkh?: string }; validators?: Array<{ identity?: string; peerId?: string }>; pools?: Array<{ outpoint?: string; poolId?: string }> };
+      type PoolsB = { market?: { identityKey?: string }; validators?: Array<{ identity?: string; peerId?: string }>; pools?: Array<{ outpoint?: string; poolId?: string }> };
       const listed = await until("B's pool listed on the race host", async () => { const v = await get3(`/@${B}/amm/pools`) as PoolsB | undefined; return v?.pools?.some((q) => q.poolId === poolB) && v.validators?.some((q) => q.identity === SHARED && q.peerId) ? v : undefined; }, 60_000);
       check(st3 === 200 && !!listed, `race host: B's pool deployed (${st3}) and listed under this host's beating validator`);
       const peerId = listed?.validators?.find((q) => q.identity === SHARED)?.peerId ?? "";
@@ -910,13 +751,16 @@ try {
       const taker = new PrivateKey("1e".repeat(32), 16);
       const takerLock = new P2PKH().lock(taker.toPublicKey().toHash());
       check(fund.outputs[1]!.lockingScript.toHex() === takerLock.toHex(), "the fixtures' fund:1 pays the taker key(0x1e)");
-      // The commission pays this relay (amm-p2p's commission key; the pools route's market.commissionPkh): the call's commissionPkh (push 6) and the commission output (4) rewritten from the fixtures' to ours.
+      // The commission pays this relay (0.21.0: a fresh key per swap — [1, "amm commission"] under the pools route's market.identityKey, key id the pool outpoint the swap spends): the call's commissionPkh (push 6) and the commission output (4) rewritten from the fixtures' to ours.
       const baseChunks0 = UnlockingScript.fromBinary(base.inputs[0]!.unlockingScript!.toBinary()).chunks;
       const fxCom = Buffer.from(baseChunks0[6]!.data!).toString("hex");
-      const ourCom = listed?.market?.commissionPkh ?? "";
+      const ourId = listed?.market?.identityKey ?? "";
+      const comFor = (id: string, pool: string) => Buffer.from(commissionPkhFor(id, pool)).toString("hex");
       // cross: the relaying host (another key) takes the commission at ITS key: started now, bootstrapped to this node.
       if (cross) xh = await relayHost(z, peerId, `/ip4/127.0.0.1/tcp/${p2pPort3}/p2p/${peerId}`);
-      const relayCom = cross ? xh!.com : ourCom;
+      const relayId = cross ? xh!.id : ourId;
+      // Every swapOn spends pool_deploy:0, so its commission key is this one; the chained legs below derive their own.
+      const relayCom = comFor(relayId, `${pd.id("hex")}_0`);
       const outsFor = (com: string) => base.outputs.slice(0, 5).map((o, i) => i === 4 ? { satoshis: o.satoshis, lockingScript: LockingScript.fromHex(o.lockingScript.toHex().replace(fxCom, com)) } : o);
       const outs = outsFor(relayCom);
       check(base.outputs[4]!.lockingScript.toHex().includes(fxCom), "the fixture swap's output 4 is the commission to its commissionPkh");
@@ -1024,7 +868,7 @@ try {
             const call = await amm.PoolTemplate.swap({
               pool: { txid: p4.id("hex"), vout: 0, satoshis: p4.outputs[0].satoshis, script: p4.outputs[0].lockingScript, sourceTransaction: p4 },
               inputs: [{ txid: s4.id("hex"), vout, satoshis: s4.outputs[vout].satoshis, lockingScript: s4.outputs[vout].lockingScript, sourceTransaction: s4, unlock: signTaker() }],
-              amountIn: 2_000n, bsvIn: true, userPkh: takerPkh, commissionPkh: relayCom, changePkh: takerPkh, fee: { sats: 2_000 },
+              amountIn: 2_000n, bsvIn: true, userPkh: takerPkh, commissionPkh: comFor(relayId, `${poolTx.id("hex")}_0`), changePkh: takerPkh, fee: { sats: 2_000 },
             });
             return Transaction.fromBinary(call.tx.toBinary());
           };
@@ -1124,7 +968,7 @@ try {
    * A relaying host of its own key (cross): bootstrapped to the validator's node, B enabled there (market only: no
    * terms), the pool's deploy in its overlay (so it holds the lineage the validator's BEEF continues).
    */
-  const relayHost = async (_v: Running, _peer: string, bootstrap: string): Promise<{ run: Running; home: string; R: string; com: string }> => {
+  const relayHost = async (_v: Running, _peer: string, bootstrap: string): Promise<{ run: Running; home: string; R: string; id: string }> => {
     const home4 = mkdtempSync(join(tmpdir(), "ox-accept-relay-"));
     writeFileSync(join(home4, "key"), `${"6e".repeat(32)}\n`, { mode: 0o600 });
     const port4 = await freePort(), hostPort4 = await freePort(), p2pPort4 = await freePort();
@@ -1148,10 +992,10 @@ try {
     check(!!(await until("/@B/amm/token on the relaying host", async () => (await fetch(`${R4}/@${B}/amm/token`)).status === 200 ? true : undefined, 60_000)), "relaying host: B enabled by root (market only)");
     await w.exchange.idle();
     const st = (await fetch(`${R4}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmB]) }, body: Uint8Array.from(ftx.get("pool_deploy")!.toBEEF()) })).status;
-    const terms = await (await fetch(`${R4}/@${B}/amm/terms`)).json() as { market?: { commissionPkh?: string } };
-    const com = terms.market?.commissionPkh ?? "";
-    check(st === 200 && /^[0-9a-f]{40}$/.test(com) && w.host.router.p2p?.peerId(B) !== _peer, `relaying host: the pool's deploy in its overlay (${st}); its own commission key ${com.slice(0, 8)}…; its own node`);
-    return { run: w, home: home4, R: R4, com };
+    const pools4 = await (await fetch(`${R4}/@${B}/amm/pools`)).json().catch(() => ({})) as { market?: { identityKey?: string } };
+    const id = pools4.market?.identityKey ?? "";
+    check(st === 200 && /^0[23][0-9a-f]{64}$/.test(id) && id === w.db.get(B)?.identity && w.host.router.p2p?.peerId(B) !== _peer, `relaying host: the pool's deploy in its overlay (${st}); its market identity ${id.slice(0, 8)}… (its own commission keys); its own node`);
+    return { run: w, home: home4, R: R4, id };
   };
   await raceHost(2);
   await raceHost(3);
@@ -1267,46 +1111,12 @@ try {
   check(!!termsP && termsP.commissionBps === 25 && termsP.minLegSats === 1000, `…with the default terms (amm/terms ${JSON.stringify(termsP)})`);
   const listedP = (await getJson(`/@${SWAP}/amm/tokens`) as Array<Record<string, unknown>>).find((t) => t.tokenId === P);
   check(listedP?.status === "enabled" && listedP.paidBy === PAYER && listedP.satoshisPaid === 2000, "/amm/tokens: P enabled, paidBy and satoshisPaid on its row");
-  const wal = await until("swap's wallet holds the payment", async () => { const v = await getJson("/amm/wallet") as { sats?: number; outputs?: number } | undefined; return v?.sats === 2000 ? v : undefined; });
-  check(wal?.sats === 2000 && wal.outputs === 1, `GET /amm/wallet: ${JSON.stringify(wal)} (the payment, internalized by swap's wallet)`);
   check(await until("the payment at Arcade", () => arcade.txs.has(good.tx.id("hex")) ? true : undefined, 30_000) === true, "…the wallet's internalize sent it on (Arcade has it, through the chain app)");
   const replay = await post(enableUrl(Q, good), bundle(dQ, good));
   check(replay.status === 409 && replay.body.code === "ERR_PAYMENT_REPLAYED", `the same payment for another token (Q): 409 ${String(replay.body.code)}`);
   const again2 = await signed(payment(3, 2000));
   const twice = await post(enableUrl(P, again2), bundle(dP, again2));
   check(twice.status === 409 && twice.body.code === "ERR_TOKEN_ENABLED", `a second request for P: 409 ${String(twice.body.code)}`);
-  // The admin's withdraw (0.15.2): a standard BRC-29 payment to the message's sender, built by swap's own program
-  // through its wallet (list, one noSend createAction of every coin, no change), answered at once and handed over
-  // UNSENT: the host broadcasts nothing; the admin's wallet takes it in.
-  const posted0 = arcade.posts.length;
-  const t3 = Date.now();
-  await send({ fn: "withdraw" });
-  const kept = await until("the withdrawal kept", async () => { const v = await getJson("/amm/wallet") as { sats?: number; withdrawals?: Array<Record<string, unknown>> } | undefined; return v?.withdrawals?.length ? v : undefined; }, 60_000);
-  const w1 = kept?.withdrawals?.[0];
-  const fee1 = Math.ceil((4 + 1 + 147 + 1 + (8 + 1 + 25) + (8 + 1 + 25) + 4) * 100 / 1000);
-  check(!!w1 && w1.n === 1 && w1.sats === 2000 - fee1 && w1.outputIndex === 0 && w1.senderIdentityKey === swapId && typeof w1.derivationPrefix === "string" && typeof w1.derivationSuffix === "string" && kept!.sats === 0, `withdraw {fn: "withdraw"} (no args): kept at once, no block mined (${Date.now() - t3} ms): ${JSON.stringify(kept)}`);
-  if (w1) {
-    const wb = await fetch(`${R}/amm/wallet/tx?n=1`);
-    const wbb = [...new Uint8Array(await wb.arrayBuffer())];
-    const wtx = esm.Transaction.fromAtomicBEEF(wbb);
-    const keyID = `${String(w1.derivationPrefix)} ${String(w1.derivationSuffix)}`;
-    const payee = new esm.KeyDeriver(admin as never).derivePrivateKey([2, "3241645161d8"], keyID, String(w1.senderIdentityKey)).toPublicKey();
-    const want = new esm.P2PKH().lock(payee.toHash()).toHex();
-    const verifies = await wtx.verify("scripts only").catch(() => false);
-    check(wb.status === 200 && wtx.id("hex") === w1.txid && wtx.outputs.length === 1 && wtx.outputs[0]!.satoshis === 2000 - fee1 && wtx.outputs[0]!.lockingScript.toHex() === want && verifies === true,
-      `GET /amm/wallet/tx?n=1: the Atomic BEEF of one transaction that verifies (scripts) and pays its one output, 2000 less the fee ${fee1}, to the admin's BRC-29 key (counterparty swap, key id the record's), no change`);
-    const sentByHost = arcade.posts.slice(posted0).some((b) => FakeArcade.txOf(b).id("hex") === w1.txid);
-    check(!sentByHost && !arcade.txs.has(String(w1.txid)), "…not broadcast by the host: Arcade has not seen it (the admin's wallet takes it in and sends it)");
-    check((await get("/amm/wallet/tx?n=2")).status === 404, "GET /amm/wallet/tx?n=2: 404");
-  }
-  await send({ fn: "withdraw" });
-  await (await r.hydrate(SWAP)).kernel.idle();
-  await sleep(1500);
-  await x.exchange.idle();
-  check((await getJson("/amm/wallet") as { withdrawals?: unknown[] }).withdrawals?.length === 1, "withdraw again with nothing in the wallet: refused, nothing kept");
-  await send({ fn: "withdraw", args: { lockingScript: "76a9" } });
-  await (await r.hydrate(SWAP)).kernel.idle();
-  check((await getJson("/amm/wallet") as { withdrawals?: unknown[] }).withdrawals?.length === 1, "withdraw with args (a script from the page): refused");
   // 0.15.4: a bundle whose entries are NOT parents first (the payment, then the deploy, then the payment's funding):
   // the door takes it; the wallet's internalize gets the payment's own BEEF, cut and written parents first.
   const dR = deploy(0x52, "RRR", 1);
@@ -1314,7 +1124,6 @@ try {
   const hR = mineAlone(dR);
   pushHeader();
   await until("swap's chain at R's deploy", async () => { const t = await (await r.hydrate(SWAP)).kernel.chainTip(); return t && t.height >= hR ? t : undefined; });
-  const sats0 = ((await getJson("/amm/wallet")) as { sats?: number }).sats ?? 0;
   const odd = await signed(payment(5, 2000));
   const ob = new esm.Beef();
   ob.mergeBeef(Array.from(dR.toBEEF()));
@@ -1328,8 +1137,8 @@ try {
   check(parsedOdd.txs.map((t) => t.txid).join() === [odd.tx.id("hex"), dR.id("hex"), PF.id("hex")].join(), "a bundle written NOT parents first: the payment, the deploy, then the payment's funding");
   const okOdd = await post(enableUrl(R2, odd), oddBytes);
   check(okOdd.status === 200 && (okOdd.body.result as { tokenId?: string } | undefined)?.tokenId === R2, `…enabled (${okOdd.status} ${JSON.stringify(okOdd.body).slice(0, 120)})`);
-  const walOdd = await until("swap's wallet holds the odd bundle's payment", async () => { const v = await getJson("/amm/wallet") as { sats?: number } | undefined; return v?.sats === sats0 + 2000 ? v : undefined; }, 30_000);
-  check(walOdd?.sats === sats0 + 2000 && !lines.some((l) => /wallet step 1 → errored · wallet: NotParentsFirst/.test(l)), `…the coin in /amm/wallet (${JSON.stringify(walOdd)}): the wallet took the payment's own BEEF, parents first`);
+  const sentOdd = await until("the odd bundle's payment at Arcade", () => arcade.txs.has(odd.tx.id("hex")) ? true : undefined, 30_000);
+  check(sentOdd === true && !lines.some((l) => /wallet step 1 → errored · wallet: NotParentsFirst/.test(l)), "…the wallet took the payment's own BEEF, parents first (no NotParentsFirst; Arcade has it, through the chain app)");
   await until("R up", async () => (await get(`/@${R2}/amm/token`)).status === 200 ? true : undefined, 60_000);
   await x.exchange.idle();
   keep(x, R2);

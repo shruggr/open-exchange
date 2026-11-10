@@ -419,7 +419,7 @@ test "the payment's own BEEF (0.15.4): cut from a bundle whose entries are not p
     try testing.expectEqualSlices(u8, &pt, &cut.entries[2].txid);
 }
 
-test "price and withdraw (0.15.0): price {sats | null} → the record (0.15.3: no event); withdraw takes no args; the kept withdrawals and the answer (the payment's derivation and sender); the builder's fee" {
+test "price (0.15.0): price {sats | null} → the record (0.15.3: no event); 0.21.0: no withdraw" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -431,27 +431,5 @@ test "price and withdraw (0.15.0): price {sats | null} → the record (0.15.3: n
     try testing.expectEqual(@as(?u64, 2500), paid.priceOf(try paid.priceRecord(a, 2500)));
     try testing.expectEqual(@as(?u64, null), paid.priceOf(try paid.priceRecord(a, null)));
     try testing.expectEqual(@as(?u64, null), paid.priceOf(null));
-    // withdraw takes no args (the payment goes to the message's sender).
-    try testing.expect(paid.withdrawArgsProblem(null) == null);
-    try testing.expect(paid.withdrawArgsProblem(try dagjsonValue(a, "{}")) == null);
-    try testing.expect(paid.withdrawArgsProblem(try dagjsonValue(a, "{\"lockingScript\":\"76a9\"}")) != null);
-    // The kept withdrawals: n counts from 1; the record keeps the BEEF as `beef`, the answer gives it as `tx`.
-    const x1 = paid.Withdrawal{ .txid = "aa" ** 32, .sats = 1500, .at = 7, .prefix = "cHJl", .suffix = "c3Vm", .sender = "02" ++ "33" ** 32, .beef = "BEEF1" };
-    const w1 = try paid.withWithdrawal(a, paid.withdrawalsOf(null), x1);
-    const w2 = try paid.withWithdrawal(a, paid.withdrawalsOf(w1), .{ .txid = "bb" ** 32, .sats = 900, .at = 9, .prefix = "p2", .suffix = "s2", .sender = x1.sender, .beef = "BEEF2" });
-    const ws2 = paid.withdrawalsOf(w2);
-    try testing.expectEqual(@as(usize, 2), ws2.len);
-    try testing.expectEqual(@as(u64, 1), ws2[0].getUint("n").?);
-    try testing.expectEqual(@as(u64, 2), ws2[1].getUint("n").?);
-    try testing.expectEqual(@as(u64, 0), ws2[0].getUint("outputIndex").?);
-    try testing.expectEqualStrings("cHJl", ws2[0].getText("derivationPrefix").?);
-    try testing.expectEqualStrings("c3Vm", ws2[0].getText("derivationSuffix").?);
-    try testing.expectEqualStrings(x1.sender, ws2[0].getText("senderIdentityKey").?);
-    try testing.expectEqualStrings("BEEF2", ws2[1].getBytes("beef").?);
-    const ans = try paid.withdrawalValue(a, 1, x1, "tx");
-    try testing.expectEqualStrings("BEEF1", ans.getBytes("tx").?);
-    try testing.expect(ans.get("beef") == null);
-    // The builder's fee (skein-sdk builder.zig estimateFeeFor at 100 sat/kB): one coin, a 25-byte script: 226 bytes → 23 sats.
-    try testing.expectEqual(@as(u64, 23), paid.feeFor(1, 25, 100));
-    try testing.expectEqual(@as(u64, 38), paid.feeFor(2, 25, 100));
 }
+

@@ -74,7 +74,6 @@ passes anything, so the host's key may send these too.
 | `discovery {on}` | `{on, since}` under `amm/discovery` | `discovery-on` / `discovery-off` | starts / stops `discovery` |
 | `defaults {terms?, market?}` (0.14.0: `terms` may carry `minLegSats`) | `amm/defaults` | none | the next `token-enabled` events carry them |
 | `price {sats \| null}` (0.15.0; the price to enable a token, null: off) | `{sats}` under `amm/enable-price` (read: `enablePriceSats` on `/amm/defaults`; `enable-check` reads it) | none (0.15.3) | nothing |
-| `withdraw` (0.15.2; no args) | a standard BRC-29 payment to the message's sender, built by swap's own program: the payee key derived for the admin (a fresh prefix and suffix, counterparty the admin), the instance's wallet launched — `list`, then ONE `createAction` with `noSend` of every spendable coin to that key, the total less the builder's fee (no change); kept under `amm/withdrawals` as `{n, txid, sats, at, outputIndex, derivationPrefix, derivationSuffix, senderIdentityKey}` and the Atomic BEEF, and answered with the same and `tx`. Nothing is broadcast here: the admin's wallet takes the payment in, which puts it on the network | none | nothing |
 | `claim` (box `amm/claim`, any sender; the first only) | `{claimant, since}` under `amm/claim` (read: `GET <swap>/amm/admin`) | `claimed {claimant}` | grants `amm.admin` on swap to the claimant (root's `grant`) |
 
 When `token-enabled` names a token that has no instance yet, the host:
@@ -114,10 +113,6 @@ Reads on swap (anyone):
   `/@discovery/1color/<tokenId>/icon`; the data-URL `icon` is gone)
 - `/amm/defaults`: `{terms?, market?, enablePriceSats}` (0.15.0: `enablePriceSats` null when unset)
 - `/amm/discovery`: `{on, since}`
-- `/amm/wallet` (0.15.0, the host's read of swap's wallet state, no step): `{sats, outputs, withdrawals: [{n, txid,
-  sats, at, outputIndex, derivationPrefix, derivationSuffix, senderIdentityKey}]}` — the coins swap's wallet spends (the
-  paid enables' payments), their total and count, and the admin's withdrawals (each a BRC-29 payment handed over unsent)
-- `/amm/wallet/tx?n=<n>` (0.15.0): withdrawal n's Atomic BEEF (`application/octet-stream`; 404 when none)
 - `/`: the pages
 
 ## The paid enable (0.15.3: a BEEF submission)
@@ -214,22 +209,12 @@ root is whoever claimed it): `run` logs a warning and leaves its pages as they a
 
 Then (0.20.1) every enabled token instance and discovery: each app its image installs by tarball
 (`image/token`, `image/discovery`) that differs from the installed app of that name is fetched once and,
-when its version differs, installed in place the same way. When the packaged app's `lookupVersion` (the
-version of its lookups' record shape) is greater than the installed one's (none: 0), the host sends root's
-`{fn: "reindex", args: {service}}` into `<app>/reindex` for each of the instance's lookups — a token's
-`ls_amm_<tokenId>` and `ls_color_<tokenId>`, discovery's `ls_color` — and the engine (skein-overlay 0.23.0)
-derives each index again from the topic's admitted history in place, one transaction per step, while the
-old index keeps answering; its last step switches the index. The log says, per instance:
+when its version differs, installed in place the same way. (0.21.0: no reindex — the overlay has none since
+0.24.0.) The log says, per instance:
 
 ```
 <tokenId>: amm updated to 0.48.1 (from 0.46.2; N messages as root)
-<tokenId>: reindex ls_amm_<tokenId> started (lookupVersion 0 → 1)
-<tokenId>: reindex ls_amm_<tokenId> done: T transactions, S steps, M ms in the log (… ms here)
 ```
-
-or `… error: <why>`. A reindex re-runs the lookups' hooks at its own steps: what they stamp with the
-step's time (a trade row's and a pool history row's `at`) carries the reindex's time, as a fresh index
-built by a sync carries its own.
 
 `run` takes every setting `skein-host run` takes from `host.env`. It serves everything
 `skein-host` serves:
@@ -285,13 +270,6 @@ these steps:
    ANOTHER host's relay (its own key, bootstrapped to the validator) → one accepted, the other
    `pool_spent`, the relaying host's overlay holding the accepted swap when it answers; the
    validator's host stopped → `unreachable` at once
-6. (0.20.1) reindex at start, on a host of its own: a token instance indexed by skein-amm v0.47.0 (its
-   image a copy of this package's with only the token app's tarball changed), its deploy, pool and two swaps
-   admitted; the same home started on this package's images → the token app installed in place (0.47.0 →
-   0.48.1) and both its lookups reindexed (lookupVersion 0 → 1), a second reindex sent while it runs (refused:
-   root's answer `reindex in progress` in its log), the LP's Close after the switch; then its pool reads (history, trades,
-   positions, stats, holders, validator fees) answer what a fresh 0.48.1 index answers, times aside; its
-   `amm/terms` and wallet heads untouched; a restart after it updates and reindexes nothing
 7. disable, then enable again; one token's terms (40/6/3, then null, an unknown token refused)
 8. discovery off, then on
 9. a restart, with reconcile

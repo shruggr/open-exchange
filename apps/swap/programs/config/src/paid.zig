@@ -11,16 +11,7 @@
 //!   or not in it (402), under the price (402), the payment already in the wallet (409). The handler checks the
 //!   output pays the BRC-29 key derived for the sender, hands the payment to the wallet (a loopback message to
 //!   the box `amm/pay`), and does what the admin's enable does, keeping `{paidBy, paymentTxid, satoshisPaid}`.
-//! - **The withdraw**, the admin's `withdraw` (no arguments): a standard BRC-29 payment to the message's
-//!   signed sender. A derivation prefix and suffix drawn as the wallet program's `payHost` draws them;
-//!   the payee key from the signer (protocol `[2, "3241645161d8"]`, key id `"<prefix> <suffix>"`,
-//!   counterparty the admin); the instance's own wallet (the genesis program `wallet`, launched): its
-//!   coins (`list`), then ONE `createAction` with `options.noSend` of every spendable coin to that
-//!   P2PKH, the output the total less the fee the builder charges (`feeFor`), so that it makes no
-//!   change. Nothing goes to the chain app: the admin's wallet takes the payment in, which puts it on
-//!   the network. Kept under the head `amm/withdrawals`: `{kind: "amm-withdrawals", withdrawals: [{n,
-//!   txid, sats, at, outputIndex: 0, derivationPrefix, derivationSuffix, senderIdentityKey, beef}]}`
-//!   (n from 1; `beef` the action's Atomic BEEF).
+//! - (0.21.0: no withdraw — no collecting in this rebuild; HANDOFF-2026-11-09 WALLET + SIGNER "SCOPE".)
 const std = @import("std");
 const w = @import("chain");
 const tokens = @import("tokens.zig");
@@ -68,82 +59,6 @@ pub fn priceOf(rec: ?Value) ?u64 {
     const r = rec orelse return null;
     if (!eql(u8, r.getText("kind") orelse "", price_kind)) return null;
     return r.getUint("sats");
-}
-
-// ---------------------------------------------------------------- the withdraw
-
-/// The admin's `withdraw` args: none (absent, null or `{}`); else why not.
-pub fn withdrawArgsProblem(args: ?Value) ?[]const u8 {
-    const x = args orelse return null;
-    if (x == .null) return null;
-    if (x == .map and x.map.len == 0) return null;
-    return "withdraw takes no args: the payment goes to the message's sender";
-}
-
-pub const withdrawals_head = "amm/withdrawals";
-pub const withdrawals_kind = "amm-withdrawals";
-
-/// The kept withdrawals (none: no record).
-pub fn withdrawalsOf(rec: ?Value) []const Value {
-    const r = rec orelse return &.{};
-    if (!eql(u8, r.getText("kind") orelse "", withdrawals_kind)) return &.{};
-    return r.getArray("withdrawals") orelse &.{};
-}
-
-/// A withdrawal: what the record keeps of it (and the answer, without `beef`).
-pub const Withdrawal = struct {
-    txid: []const u8,
-    sats: u64,
-    at: u64,
-    prefix: []const u8,
-    suffix: []const u8,
-    /// This instance's identity key (hex): the payment's sender, the recipient's counterparty.
-    sender: []const u8,
-    beef: []const u8,
-};
-
-/// The withdrawal's fields as kept, `n` its number; with `beef` (the record) or `tx` (the answer) as the BEEF's key.
-pub fn withdrawalValue(a: Allocator, n: u64, x: Withdrawal, beef_key: []const u8) !Value {
-    return map(a, &.{
-        .{ .key = "n", .value = .{ .uint = n } },
-        .{ .key = "txid", .value = .{ .text = x.txid } },
-        .{ .key = "sats", .value = .{ .uint = x.sats } },
-        .{ .key = "at", .value = .{ .uint = x.at } },
-        .{ .key = "outputIndex", .value = .{ .uint = 0 } },
-        .{ .key = "derivationPrefix", .value = .{ .text = x.prefix } },
-        .{ .key = "derivationSuffix", .value = .{ .text = x.suffix } },
-        .{ .key = "senderIdentityKey", .value = .{ .text = x.sender } },
-        .{ .key = beef_key, .value = .{ .bytes = x.beef } },
-    });
-}
-
-/// The record with one more withdrawal, n = the count so far + 1.
-pub fn withWithdrawal(a: Allocator, prev: []const Value, x: Withdrawal) !Value {
-    const all = try a.alloc(Value, prev.len + 1);
-    @memcpy(all[0..prev.len], prev);
-    all[prev.len] = try withdrawalValue(a, prev.len + 1, x, "beef");
-    return map(a, &.{
-        .{ .key = "kind", .value = .{ .text = withdrawals_kind } },
-        .{ .key = "withdrawals", .value = .{ .array = all } },
-    });
-}
-
-fn varintLen(n: u64) u64 {
-    return if (n < 0xfd) 1 else if (n <= 0xffff) 3 else if (n <= 0xffff_ffff) 5 else 9;
-}
-
-/// The fee the wallet's builder charges for `n` of its own coins (P2PKH, each unlock estimated at 106
-/// bytes) and one output of `script_len` bytes, a 25-byte change output included in the size
-/// (skein-sdk wallet/src/builder.zig `estimateFeeFor`; bsvz SatoshisPerKilobyte: ceil(size × rate / 1000)).
-/// With the output at the total less this fee, the change comes to zero and the builder drops it.
-pub fn feeFor(n: u64, script_len: u64, sats_per_kb: u64) u64 {
-    var size: u64 = 4 + varintLen(n);
-    size += n * (40 + varintLen(106) + 106);
-    size += varintLen(2);
-    size += 8 + varintLen(script_len) + script_len;
-    size += 8 + varintLen(25) + 25;
-    size += 4;
-    return (size * sats_per_kb + 999) / 1000;
 }
 
 // ---------------------------------------------------------------- the paid enable

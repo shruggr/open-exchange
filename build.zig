@@ -22,7 +22,7 @@ const Mods = struct {
     cbor: *std.Build.Module,
     dagjson: *std.Build.Module,
     overlay_sk: *std.Build.Module,
-    /// The SDK's wallet library (0.15.2: BRC-29 and the signer's wire frames, for the withdraw's payee key).
+    /// The SDK's wallet library (0.15.2: BRC-29 and the signer's wire frames, for the paid enable's payee key check).
     wallet: *std.Build.Module,
 };
 

@@ -27,12 +27,8 @@
 //!                       `discovery-on` / `discovery-off` (discovery.zig).
 //!     {fn: "price", args: {sats | null}}   (0.15.0) the price to enable a token: the head
 //!                       `amm/enable-price` (null: off); `enable-check` reads it (0.15.3: no event) (paid.zig).
-//!     {fn: "withdraw"}   (0.15.2; no args) every coin of the instance's wallet paid to the sender
-//!                       (BRC-29, a payee key derived for it), by launching the genesis program
-//!                       `wallet`: `list`, then ONE noSend `createAction` (the total less the
-//!                       builder's fee: no change); kept under `amm/withdrawals` and answered with the
-//!                       payment `{n, txid, sats, at, outputIndex, derivationPrefix, derivationSuffix,
-//!                       senderIdentityKey, tx}`; nothing to withdraw: refused (paid.zig).
+//!     (0.21.0: no `withdraw` — no collecting in this rebuild, HANDOFF-2026-11-09 WALLET + SIGNER
+//!                       "SCOPE": refused as an unknown fn.)
 //!   box `amm/claim` (kernel.beef; its function `claim` gated by no role: any sender; claim.zig):
 //!     {fn: "claim"}   the first: the head `amm/claim` `{claimant: <the sender>, since}` and the
 //!                       event `{event: "claimed", claimant: <hex>}` (the host grants it amm.admin);
@@ -259,7 +255,7 @@ fn payIn(a: Allocator, in: Value, args: Value, body: Value) !void {
         .{ .key = "tx", .value = .{ .bytes = tx } },
         .{ .key = "outputs", .value = .{ .array = try a.dupe(Value, &.{output}) } },
         .{ .key = "description", .value = .{ .text = x.getText("description") orelse "Open Exchange enable" } },
-    }, null);
+    });
 }
 
 fn toSdk(a: Allocator, v: Value) !scbor.Value {
@@ -312,8 +308,7 @@ fn step(a: Allocator, in: Value) !void {
     if (eql(u8, func, "defaults")) return defaults(a, args, body);
     if (eql(u8, func, "discovery")) return discoverySet(a, in, args, body);
     if (eql(u8, func, "price")) return priceSet(a, args, body);
-    if (eql(u8, func, "withdraw")) return withdraw(a, in, args, body);
-    return answerRoot(a, args, func, try tokens.refusal(a, func, args.getCid("message"), "unknown-fn", "amm/admin takes enable, disable, terms, defaults, discovery, price and withdraw"));
+    return answerRoot(a, args, func, try tokens.refusal(a, func, args.getCid("message"), "unknown-fn", "amm/admin takes enable, disable, terms, defaults, discovery and price"));
 }
 
 /// Answer the message's sender in the box it wrote to; the thread ends.
@@ -424,115 +419,12 @@ fn priceSet(a: Allocator, args: Value, body: Value) !void {
     return answerRoot(a, args, "price", try tokens.answer(a, "price", message, rec));
 }
 
-/// `withdraw` (0.15.2): a BRC-29 payment of every coin of the instance's wallet to the message's sender —
-/// the wallet (the genesis program `wallet`) launched twice from this thread: `list`, then one noSend
-/// `createAction`; its result (`{txid, tx}`) kept and answered at once.
-fn withdraw(a: Allocator, in: Value, args: Value, body: Value) !void {
-    const message = args.getCid("message");
-    if (paid.withdrawArgsProblem(body.get("args"))) |why| return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "bad-args", why));
-    const sender = args.getBytes("sender") orelse return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "no-sender", "a withdraw is a signed message: its sender is paid"));
-    if (sender.len != 33) return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "no-sender", "the sender is not an identity key"));
-    const wallet = if (in.get("programs")) |ps| ps.getCid("wallet") else null;
-    const prog = wallet orelse return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "no-wallet", "this instance's genesis has no wallet program"));
-    const resolved = in.get("resolved") orelse return launchWallet(a, prog, &.{.{ .key = "op", .value = .{ .text = "list" } }}, null);
-    const r = resolved.array[0];
-    const rec = (try walletResult(a, r)) orelse {
-        const why = if (r.get("error")) |e| e.getText("message") orelse "the wallet's step failed" else "the wallet's step failed";
-        return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "wallet", why));
-    };
-    const op = rec.getText("op") orelse "";
-    if (eql(u8, op, "list")) {
-        var n: u64 = 0;
-        for (rec.getArray("outputs") orelse &.{}) |o| if (o.get("spendable")) |sp| if (sp == .boolean and sp.boolean) {
-            n += 1;
-        };
-        const total = rec.getUint("total") orelse 0;
-        const rate_text = if (in.get("defaults")) |d| d.getText("walletFeeRate") orelse "100" else "100";
-        const rate = std.fmt.parseInt(u64, rate_text, 10) catch 100;
-        const fee = paid.feeFor(n, 25, rate);
-        if (n == 0 or total <= fee) return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "nothing-to-withdraw", try std.fmt.allocPrint(a, "nothing to withdraw: {d} sats in {d} coins, the fee {d}", .{ total, n, fee })));
-        // The payee key, as the wallet's payHost derives a payee's: a fresh prefix and suffix (12 bytes each,
-        // base64, from the step's random), BRC-29's key id, counterparty the recipient, from the signer.
-        var rnd: [24]u8 = undefined;
-        ssk.io().randomSecure(&rnd) catch return error.RandomFailed;
-        const enc = std.base64.standard.Encoder;
-        const prefix = try a.alloc(u8, enc.calcSize(12));
-        const suffix = try a.alloc(u8, enc.calcSize(12));
-        _ = enc.encode(prefix, rnd[0..12]);
-        _ = enc.encode(suffix, rnd[12..24]);
-        const frame = try wl.wire.getPublicKeyFrameFor(a, wl.brc29.security_level, wl.brc29.protocol_name, try wl.brc29.keyId(a, prefix, suffix), .{ .other = sender[0..33].* }, false);
-        const payee = try wl.wire.publicKeyResult(try ssk.result(a, ssk.raw.wallet, .{ frame.ptr, @as(u32, @intCast(frame.len)) }));
-        const script = try a.dupe(u8, &wl.brc29.p2pkh(payee));
-        const out = Value{ .map = try a.dupe(cbor.Entry, &.{
-            .{ .key = "lockingScript", .value = .{ .bytes = script } },
-            .{ .key = "satoshis", .value = .{ .uint = total - fee } },
-            .{ .key = "outputDescription", .value = .{ .text = "Open Exchange withdraw" } },
-        }) };
-        const nth = paid.withdrawalsOf(try headRecord(a, paid.withdrawals_head)).len + 1;
-        const opts = Value{ .map = try a.dupe(cbor.Entry, &.{.{ .key = "noSend", .value = .{ .boolean = true } }}) };
-        return launchWallet(a, prog, &.{
-            .{ .key = "op", .value = .{ .text = "createAction" } },
-            .{ .key = "description", .value = .{ .text = try std.fmt.allocPrint(a, "Open Exchange withdraw {d}", .{nth}) } },
-            .{ .key = "outputs", .value = .{ .array = try a.dupe(Value, &.{out}) } },
-            .{ .key = "options", .value = opts },
-        }, .{ .map = try a.dupe(cbor.Entry, &.{
-            .{ .key = "derivationPrefix", .value = .{ .text = prefix } },
-            .{ .key = "derivationSuffix", .value = .{ .text = suffix } },
-        }) });
-    }
-    if (!eql(u8, op, "createAction")) return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "wallet", try std.fmt.allocPrint(a, "the wallet answered {s}", .{op})));
-    // The noSend createAction at rest: its {txid, tx}; the derivation from the launch's own args.
-    const txid = rec.getText("txid") orelse "";
-    const beef = rec.getBytes("tx") orelse return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "wallet", "the wallet's createAction gave no transaction"));
-    const d = (try launchedDerivation(a, r)) orelse return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "wallet", "the withdrawal's derivation is not on its launch"));
-    const sats = withdrawnSats(a, beef) orelse return answerRoot(a, args, "withdraw", try tokens.refusal(a, "withdraw", message, "wallet", "the withdrawal's BEEF names no output"));
-    const me = vm.selfKey(in) orelse return error.BadInput;
-    const x = paid.Withdrawal{ .txid = txid, .sats = sats, .at = now(in), .prefix = d.prefix, .suffix = d.suffix, .sender = try a.dupe(u8, &std.fmt.bytesToHex(me[0..33].*, .lower)), .beef = beef };
-    const prev = paid.withdrawalsOf(try headRecord(a, paid.withdrawals_head));
-    try vm.advance(paid.withdrawals_head, try vm.store().putValue(a, try paid.withWithdrawal(a, prev, x)));
-    return answerRoot(a, args, "withdraw", try tokens.answer(a, "withdraw", message, try paid.withdrawalValue(a, prev.len + 1, x, "tx")));
-}
-
-/// The derivation the createAction's launch carried (its args' `withdrawal`), from the resolved thread's origin.
-fn launchedDerivation(a: Allocator, resolved: Value) !?struct { prefix: []const u8, suffix: []const u8 } {
-    const s = vm.store();
-    const origin = try s.getValue(a, resolved.getCid("thread") orelse return null);
-    // The kernel keeps a launched thread's args inline in its origin (scheduler.zig hLaunch).
-    const largs = origin.get("args") orelse return null;
-    const wd = largs.get("withdrawal") orelse return null;
-    return .{ .prefix = wd.getText("derivationPrefix") orelse return null, .suffix = wd.getText("derivationSuffix") orelse return null };
-}
-
-/// Launch the wallet on `{op, …}` (args `{body: <that record>, withdrawal?}`: the wallet reads `body`; `withdrawal`
-/// the payment's derivation, read back from the thread's origin when it rests); this thread waits on it.
-fn launchWallet(a: Allocator, prog: []const u8, fields: []const cbor.Entry, withdrawal: ?Value) !void {
+/// Launch the wallet on `{op, …}` (args `{body: <that record>}`: the wallet reads `body`); this thread waits on it.
+fn launchWallet(a: Allocator, prog: []const u8, fields: []const cbor.Entry) !void {
     const s = vm.store();
     const body = try s.putValue(a, .{ .map = try a.dupe(cbor.Entry, fields) });
-    const args = try s.putValue(a, .{ .map = if (withdrawal) |wd| try a.dupe(cbor.Entry, &.{ .{ .key = "body", .value = .{ .cid = body } }, .{ .key = "withdrawal", .value = wd } }) else try a.dupe(cbor.Entry, &.{.{ .key = "body", .value = .{ .cid = body } }}) });
+    const args = try s.putValue(a, .{ .map = try a.dupe(cbor.Entry, &.{.{ .key = "body", .value = .{ .cid = body } }}) });
     _ = try vm.launch(a, prog, args);
-}
-
-/// The wallet thread's last result record (its stdout: the record's CID in hex), or null (errored).
-fn walletResult(a: Allocator, resolved: Value) !?Value {
-    if (!eql(u8, resolved.getText("state") orelse "", "finished")) return null;
-    const res = resolved.get("result") orelse return null;
-    const out = std.mem.trim(u8, res.getBytes("stdout") orelse return null, " \n");
-    const cid = try a.alloc(u8, out.len / 2);
-    _ = std.fmt.hexToBytes(cid, out) catch return null;
-    return try vm.store().getValue(a, cid);
-}
-
-/// Output 0's satoshis of the Atomic BEEF's subject transaction (the withdrawal's one output).
-fn withdrawnSats(a: Allocator, beef: []const u8) ?u64 {
-    const b = w.beef.parse(a, beef) catch return null;
-    const subject = b.atomic orelse return null;
-    for (b.entries) |e| if (std.mem.eql(u8, &e.txid, &subject)) {
-        const raw = e.raw orelse return null;
-        const t = w.bsvz.transaction.Transaction.parse(a, raw) catch return null;
-        if (t.outputs.len == 0) return null;
-        return @intCast(t.outputs[0].satoshis);
-    };
-    return null;
 }
 
 /// `claim` (box amm/claim, any sender): the first claim recorded and emitted; a later one refused.
