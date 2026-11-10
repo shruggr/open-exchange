@@ -4,8 +4,14 @@
       "url": "https://github.com/shruggr/skein-chain/archive/refs/tags/v0.10.0.tar.gz",
       "hash": "2c064b8c60918e118e9c585ba080026c114bbab3"
     },
-    "../../../skein-signer",
-    "../../../skein-wallet",
+    {
+      "url": "https://github.com/shruggr/skein-signer/archive/refs/tags/v0.1.0.tar.gz",
+      "hash": "fa96fce374d093291b066045851a7e4f850b2fb0"
+    },
+    {
+      "url": "https://github.com/shruggr/skein-wallet/archive/refs/tags/v0.1.0.tar.gz",
+      "hash": "f627f2906eaefb77b61cec50010dcb9477963501"
+    },
     {
       "url": "https://github.com/shruggr/skein-amm/archive/fc88a84038353b57e62981931c0960aa4c9018d1.tar.gz",
       "hash": "b273b169c47a9339d2d153307f30dbdb63c76856"
