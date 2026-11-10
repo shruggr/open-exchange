@@ -5,14 +5,14 @@
 // routing a topic to its instance, the host-side door, the host's duplicate control). The instance keeps its own HTTP
 // /submit route (generic skein); this host does not use it.
 //
-//   POST /@<handle>/submit and POST /submit (bare host, routed by X-Topics to the instance: skein F1, appRead asked for a
-//   topic-routed request — NOT in skein yet) with the BEEF as the body and X-Topics a JSON array of topics:
+//   POST /@<handle>/submit and POST /submit (bare host, routed by X-Topics to the instance: skein asks appRead for a topic-routed
+//   request before forwarding it) with the BEEF as the body and X-Topics a JSON array of topics:
 //   1. every named topic must be one the instance serves (host.db `instances.topics`): else 400;
 //   2. T = the BEEF's subject (the Atomic BEEF's, else its last transaction);
 //   3. duplicate control: T's latest verdict `<app>/topic/tx/<T>` already admitted / rejected / reverted → answered from
 //      it at once, nothing handed over;
 //   4. else the BEEF handed to the instance as the ONE submit: the submit message to `<app>/submit`, signed as the
-//      instance (skein Router `submitAsSelf`, F2 — private in skein today, reached by bracket access), the first topic
+//      instance (skein Router `submitAsSelf`, public since the call-permissions merge), the first topic
 //      named; a refusal at the instance's door → 400 with its reason, now;
 //   5. the connection held on `<app>/topic/tx/<T>`: admitted → 200 STEAK {<topic>: {outputsToAdmit, coinsToRetain}};
 //      rejected / reverted → 400; undecided → still held. THE CLIENT'S CONNECTION IS THE ONLY TIMER: when it closes the
@@ -27,7 +27,6 @@ import type { Router } from "./skein.ts";
 
 type RouterRequest = import("@dcasegr/skein/dist/host/router.js").RouterRequest;
 type RouterResponse = import("@dcasegr/skein/dist/host/router.js").RouterResponse;
-type InboundAnswer = { verdict: "accept" | "reject" | "ignore"; reason?: string };
 
 export const SUBMIT_ROUTE = "/submit";
 const TOKEN_ID = /^[0-9a-f]{64}_\d+$/;
@@ -101,7 +100,7 @@ export class Door {
         try {
           stop = await followAll(this.r, handle, { name }, (_n, rec) => { if (decided(rec)) void this.answer(handle, app, topic, txid, tx, rec).then(finish); }, () => finish({ verdict: "gone" }));
           if (done) { stop(); return; }
-          const a = await (this.r as unknown as { submitAsSelf(h: string, app: string, beef: Uint8Array, topic: string): Promise<InboundAnswer> }).submitAsSelf(handle, app, beef, topic);
+          const a = await this.r.submitAsSelf(handle, app, beef, topic);
           if (a.verdict === "reject") finish({ verdict: "refused", status: 400, reason: a.reason ?? "turned away at the door" });
           else if (a.verdict === "ignore") finish({ verdict: "refused", status: 503, reason: a.reason ?? "not taken" });
         } catch (e) { finish({ verdict: "refused", status: 503, reason: (e as Error).message }); }

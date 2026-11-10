@@ -25,7 +25,7 @@
 //                          &derivationSuffix=, signed, ONE BEEF with the deploy and the payment: off → 403; no payment
 //                          named → 402 with the price; no deploy → 400; too small → 402; a wrong key → 400; a good
 //                          bundle → enabled with the default terms, the coin in swap's wallet (sent on by its
-//                          internalize); the same payment for another token → 409; a second request → 409; disabled by
+//                          chain app; 0.21.0: filed in the wallet app's basket bsv); the same payment for another token → 409; a second request → 409; disabled by
 //                          the admin → 409 (0.21.0: no withdraw, no /amm/wallet)
 //   discovery off / on   → stopped / started; (0.15.1) the list's q (symbol / token id prefix) and after (paging)
 //   restart the host     → reconcile creates nothing and starts what swap says
@@ -85,7 +85,7 @@ const { keyWallet } = await skein<typeof import("@dcasegr/skein/dist/wallet.js")
 const { FakeArcade } = await skein<typeof import("@dcasegr/skein/dist/host/fake-arcade.js")>("src/host/fake-arcade.ts");
 /** 0.18.0: the largest request or reply BEEF the five-swap chain may carry (bytes): a swap alone is ~12.6 KB here. */
 const CHAIN_BOUND = 16_000;
-/** The page's own leg code (skein-amm 0.48.0's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
+/** The page's own leg code (skein-amm 0.49.0's @dcasegr/amm-client: PoolTemplate, fundingBeef, topicAdmitted), when installed. */
 async function ammClient(): Promise<{ PoolTemplate: any; fundingBeef: any; topicAdmitted: any; sdk4: any } | undefined> {
   try {
     const entry = fileURLToPath(import.meta.resolve("@dcasegr/amm-client"));
@@ -741,7 +741,13 @@ try {
       await z.exchange.rootMessage(SWAP, "amm/admin", { fn: "enable", args: { tokenId: B, beef: Uint8Array.from(ftx.get("token_deploy")!.toAtomicBEEF()) } });
       check(!!(await until("/@B/amm/token on the race host", async () => (await fetch(`${R3}/@${B}/amm/token`)).status === 200 ? true : undefined, 60_000)), "race host: terms set, B enabled by root");
       await z.exchange.idle();
-      const st3 = (await fetch(`${R3}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmB]) }, body: Uint8Array.from(ftx.get("pool_deploy")!.toBEEF()) })).status;
+      // 0.21.0: through the host's own /submit door (door.ts): the STEAK answers it from the verdict event.
+      const sub3 = await fetch(`${R3}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmB]) }, body: Uint8Array.from(ftx.get("pool_deploy")!.toBEEF()) });
+      const st3 = sub3.status;
+      const steak3 = await sub3.json().catch(() => ({})) as Record<string, { outputsToAdmit?: number[] }>;
+      check(st3 === 200 && Array.isArray(steak3[tmB]?.outputsToAdmit) && steak3[tmB]!.outputsToAdmit!.includes(0), `the host's /submit door: the pool deploy admitted, STEAK ${JSON.stringify(steak3)}`);
+      const again3 = await (await fetch(`${R3}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmB]) }, body: Uint8Array.from(ftx.get("pool_deploy")!.toBEEF()) })).json().catch(() => ({}));
+      check(JSON.stringify(again3) === JSON.stringify(steak3), "…the same BEEF again: answered from its verdict, the same STEAK (the door's duplicate control)");
       type PoolsB = { market?: { identityKey?: string }; validators?: Array<{ identity?: string; peerId?: string }>; pools?: Array<{ outpoint?: string; poolId?: string }> };
       const listed = await until("B's pool listed on the race host", async () => { const v = await get3(`/@${B}/amm/pools`) as PoolsB | undefined; return v?.pools?.some((q) => q.poolId === poolB) && v.validators?.some((q) => q.identity === SHARED && q.peerId) ? v : undefined; }, 60_000);
       check(st3 === 200 && !!listed, `race host: B's pool deployed (${st3}) and listed under this host's beating validator`);
@@ -845,7 +851,7 @@ try {
         // building each leg's funding BEEF (`fundingBeef` over a wallet-like BEEF that grows with every swap, with
         // `topicAdmitted`): every request BEEF (the host's `requestBeef`) and every reply `beef` under CHAIN_BOUND.
         const amm = await ammClient();
-        check(!!amm, `chain: @dcasegr/amm-client (0.48.0) loads for the page's own leg code (${amm ? "ok" : "install it with its peers: in a directory of its own, npm install --legacy-peer-deps <engine.tgz> <client.tgz> @1sat/templates@0.1.1 @bsv/sdk@^4 @bsv/color-permission-module@npm:@bopen-io/color-permission-module@0.2.2, then link node_modules/@dcasegr/amm-client to it (the host's own @bsv/sdk 2 and @1sat/templates 0.0.x do not serve it)"})`);
+        check(!!amm, `chain: @dcasegr/amm-client (0.49.0) loads for the page's own leg code (${amm ? "ok" : "install it with its peers: in a directory of its own, npm install --legacy-peer-deps <engine.tgz> <client.tgz> @1sat/templates@0.1.1 @bsv/sdk@^4 @bsv/color-permission-module@npm:@bopen-io/color-permission-module@0.2.2, then link node_modules/@dcasegr/amm-client to it (the host's own @bsv/sdk 2 and @1sat/templates 0.0.x do not serve it)"})`);
         if (amm) {
           const { requestBeef } = await import("../../host/relay.ts");
           const assetHex = Buffer.from(ftx.get("token_deploy")!.hash() as number[]).toString("hex");
@@ -920,6 +926,21 @@ try {
       } else {
       // n on the deployed pool output.
       const w1 = await race(n, 0, `${pd.id("hex")}_0`);
+      if (w1 && !cross) {
+        // 0.21.0 (skein-amm 0.49.0 recognizers): the swap's hop row under amm/hop, its fee outputs filed in B's wallet
+        // app — the validator fee (this host's validator) and the commission (this exchange's per-swap key) — basket
+        // bsv (a buy pays its fees in sats); the token fee tally read.
+        const hops = await get3(`/@${B}/events/amm/hop`) as Array<{ record?: Record<string, unknown> }> | undefined;
+        const hop = hops?.map((h) => h.record ?? {}).find((r) => r.txid === w1 && r.kind === "swap");
+        const fv = (hop?.feeVouts ?? {}) as { validator?: number; commission?: number };
+        check(!!hop && typeof fv.validator === "number" && typeof fv.commission === "number", `amm/hop: the accepted swap's row, feeVouts ${JSON.stringify(fv)}`);
+        const wo = await get3(`/@${B}/wallet/outputs?basket=bsv`) as { outputs?: Array<{ outpoint?: string }> } | undefined;
+        const ops = new Set((wo?.outputs ?? []).map((o) => o.outpoint));
+        const wb = await get3(`/@${B}/wallet/balance?basket=bsv`) as { satoshis?: number } | undefined;
+        check(ops.has(`${w1}.${fv.validator}`) && ops.has(`${w1}.${fv.commission}`) && (wb?.satoshis ?? 0) > 0, `…the validator fee and the commission filed in B's wallet, basket bsv (${[...ops].join(", ").slice(0, 200)}; balance ${JSON.stringify(wb)})`);
+        const ft = await get3(`/@${B}/amm/fees/tokens`) as { tokenId?: string; units?: number } | undefined;
+        check(ft?.tokenId === B && typeof ft.units === "number", `…the token fee tally /@<B>/amm/fees/tokens: ${JSON.stringify(ft)}`);
+      }
       // Two more on the same output afterwards: the pool is spent and nothing in flight — pool_spent at once, none signed.
       if (w1 && n === 2 && !cross) {
         const late = await Promise.all([2, 3].map(async (k) => relay(await swapOn(k), `${pd.id("hex")}_0`)));
@@ -1097,7 +1118,7 @@ try {
   const wrong = await signed(payment(1, 2000, new esm.P2PKH().lock(esm.PrivateKey.fromRandom().toPublicKey().toHash()) as never));
   const wrongKey = await post(enableUrl(P, wrong), bundle(dP, wrong));
   check(wrongKey.status === 400 && wrongKey.body.code === "ERR_INVALID_PAYMENT" && !(await getJson(`/@${SWAP}/amm/tokens`) as Array<{ tokenId: string }>).some((t) => t.tokenId === P), `a payment to another key: 400 ${String(wrongKey.body.code)}, nothing enabled`);
-  // A good bundle: enabled; the payment handed to swap's wallet (its internalize sends it on).
+  // A good bundle: enabled; the payment into the chain app (which sends it on) and filed with the wallet app (0.21.0).
   const t2 = Date.now();
   const ok = await post(enableUrl(P, good), bundle(dP, good));
   const res = ok.body.result as Record<string, unknown> | undefined;
@@ -1111,7 +1132,12 @@ try {
   check(!!termsP && termsP.commissionBps === 25 && termsP.minLegSats === 1000, `…with the default terms (amm/terms ${JSON.stringify(termsP)})`);
   const listedP = (await getJson(`/@${SWAP}/amm/tokens`) as Array<Record<string, unknown>>).find((t) => t.tokenId === P);
   check(listedP?.status === "enabled" && listedP.paidBy === PAYER && listedP.satoshisPaid === 2000, "/amm/tokens: P enabled, paidBy and satoshisPaid on its row");
-  check(await until("the payment at Arcade", () => arcade.txs.has(good.tx.id("hex")) ? true : undefined, 30_000) === true, "…the wallet's internalize sent it on (Arcade has it, through the chain app)");
+  check(await until("the payment at Arcade", () => arcade.txs.has(good.tx.id("hex")) ? true : undefined, 30_000) === true, "…the swap app ingested it at the chain app, which sent it on (Arcade has it)");
+  // 0.21.0: filed with the WALLET APP in the basket bsv, the payer's BRC-29 derivation (the open reads).
+  const outsBsv = await getJson(`/@${SWAP}/wallet/outputs?basket=bsv`) as { outputs?: Array<Record<string, unknown>> } | undefined;
+  const filedPay = outsBsv?.outputs?.find((o) => o.outpoint === `${good.tx.id("hex")}.0`);
+  const balBsv = await getJson(`/@${SWAP}/wallet/balance?basket=bsv`) as { satoshis?: number } | undefined;
+  check(!!filedPay && balBsv?.satoshis === 2000, `…filed in swap's wallet app, basket bsv: ${JSON.stringify(filedPay)?.slice(0, 200)}; balance ${JSON.stringify(balBsv)}`);
   const replay = await post(enableUrl(Q, good), bundle(dQ, good));
   check(replay.status === 409 && replay.body.code === "ERR_PAYMENT_REPLAYED", `the same payment for another token (Q): 409 ${String(replay.body.code)}`);
   const again2 = await signed(payment(3, 2000));
