@@ -7,8 +7,7 @@
 //                                        app installed into swap when its version differs (the host's key
 //                                        is root there), then the instances reconciled with swap's heads, then
 //                                        (0.20.1) each token instance and discovery given its image's packaged
-//                                        apps when their versions differ, and its lookups reindexed in place
-//                                        when a packaged lookupVersion is greater than the installed one.
+//                                        apps when their versions differ.
 //                                        The first run (2026-11-02, zero config: what `setup` did) makes
 //                                        what is missing first: the one key and host.env (when absent), the
 //                                        host skein, `swap` from the image swap and `discovery` from the
@@ -27,7 +26,6 @@ import { join } from "node:path";
 import { Exchange, DISCOVERY, DISCOVERY_TOPICS, SWAP } from "./exchange.ts";
 import { Relay } from "./relay.ts";
 import { Pools } from "./pools.ts";
-import { walletRead } from "./wallet.ts";
 import { IMAGES_DIR, load, skeinVersion, type Router, type Skein } from "./skein.ts";
 
 type Vars = Record<string, string | undefined>;
@@ -85,16 +83,13 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   // 0.13.0: GET /amm/stats and /amm/positions too; 0.14.0: /amm/spends, the market candles and the pool event
   // feeds (a token instance's emitted `pool` event goes to the feeds, not to swap's reactions).
   let pools: Pools | undefined;
-  // 0.15.0: GET /amm/wallet and /amm/wallet/tx (wallet.ts), the host's reads of swap's core wallet and its withdrawals.
-  let walletHost: Router | undefined;
   // 0.17.0 (skein-amm 0.44.0): POST /@<tokenId>/amm/swap, the swap relay (relay.ts), the request's close its only timer.
   // skein 0.3.2: the hook is offered EVERY method, and `req.signal` fires when the client closes before the answer.
   // The reads below are GETs only: a POST to one of their routes is forwarded to the instance as before.
   let relay: Relay | undefined;
   const appRead = async (h: string, route: string, url: URL, req: Parameters<Pools["appRead"]>[3]) =>
     (await relay?.route(h, route, req, req.signal)) ??
-    (req.method !== "GET" ? undefined :
-      (walletHost ? await walletRead(sk, walletHost, SWAP, h, route, url) : undefined) ?? await pools?.appRead(h, route, url, req));
+    (req.method !== "GET" ? undefined : await pools?.appRead(h, route, url, req));
   const appEvent = (h: string, rec: Record<string, unknown>) => {
     if (pools?.poolEvent(h, rec)) return;
     if (ex) ex.event(h, rec); else early.push([h, rec]);
@@ -103,17 +98,16 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   const log = (l: string) => env.out(`[open-exchange] ${l}`);
   pools = new Pools(host.router, log, sk.cid.decode);
   relay = new Relay({ router: host.router, sk, log });
-  walletHost = host.router;
   const pl = pools;
   ex = new Exchange({ sk, router: host.router, hostKey: key.identity, hostWallet: key.wallet, log, ...(o.swapAppDir ? { swapAppDir: o.swapAppDir } : {}), ...(o.imagesDir ? { imagesDir: o.imagesDir } : {}) });
   env.out(`open-exchange: swap's events wired (token-enabled, token-disabled, discovery-on, discovery-off, claimed) · skein ${skeinVersion()} · images ${IMAGES_DIR} · the host's key ${key.identity.slice(0, 8)}…`);
   for (const [h, rec] of early.splice(0)) ex.event(h, rec);
   void ex.updateSwap();
   void ex.reconcile();
-  // 0.20.1: the token instances' and discovery's packaged apps in place, their lookups reindexed on a greater lookupVersion.
+  // 0.20.1: the token instances' and discovery's packaged apps in place (0.21.0: no reindex).
   void ex.updateInstances();
   const exchange = ex;
-  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { await exchange.idle(); exchange.stopWatching(); pl.stop(); await host.stop(); db.close(); } };
+  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { await exchange.idle(); pl.stop(); await host.stop(); db.close(); } };
 }
 
 async function run(sk: Skein, given: Env, rest: string[]): Promise<number> {

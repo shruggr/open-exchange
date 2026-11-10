@@ -402,7 +402,7 @@
                 },
                 "example": {
                   "market": {
-                    "commissionPkh": "5f2c9d0a1b3e4f5061728394a5b6c7d8e9f00112",
+                    "identityKey": "030683a6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbcc",
                     "minCommissionBps": 1
                   },
                   "validators": [
@@ -1209,7 +1209,7 @@
       "post": {
         "operationId": "S1",
         "summary": "Relay a swap leg to its validator (the host is the relay)",
-        "description": "The open-exchange host relays one swap leg (0.17.0, skein-amm 0.44.0: the instance logs facts, never attempts; nothing about the attempt is recorded). Plain (no BRC-104 session, as /submit). The host checks ONE rule, the exchange's commission: when the pool's CommissionBps > 0 the Swap call's commissionPkh must be hash160 of the token instance's key for [1, \"amm commission\"], key id \"relay\", counterparty anyone (the market's `commissionPkh` on /pools and /terms); a swap that fails it is answered `commission_missing` and nothing is relayed. Everything else is the validator's. The host signs the validator's package with the token instance's key, carries it on one libp2p stream (one request frame, one answer frame) to `peerId` — or, when `peerId` is this host's own node, hands it in as that node's inbound frame — submits a `beef` the reply carries to the token instance's overlay (another node's) and answers the validator's reply as it is. Any break in the call (dial refused, protocol not served, write failed, stream closed without an answer) is answered `unreachable` at once. The client's request is the only timer: when it closes the host stops (a dial in progress cancelled, a request not yet written never written, an open stream closed); once written, the validator answers on its stream and a signed swap reaches the overlay regardless. No retries, no record, no status read. THE BEEF RULE (0.18.0, skein 0.3.3 / skein-amm 0.45.0): a transaction the token's topic admitted (the pool output's transaction, a swap whose change or payout the taker spends) goes by txid alone (a BEEF V2 txid-only entry) — the validator's instance holds it, and skein 0.3.3's door admits a txid-only entry for a transaction the instance holds; every other transaction (the taker's own funding) raw with its ancestry back to proven (its BUMPs). A request the door would refuse (0.18.2, skein-amm 0.46.2) — a txid-only entry the validator's instance does not hold, a source neither in the BEEF nor held, a script that fails — is refused by the validator before its pool lock and its signature: `{ok: false, reason: \"bad_transaction\", detail: \"<the verifier's error>: <its meaning> (<txid or input>)\"}`, e.g. `UnknownTxidOnly: … (<txid>)`; nothing signed, nothing recorded, the pool not held.",
+        "description": "The open-exchange host relays one swap leg (0.17.0, skein-amm 0.44.0: the instance logs facts, never attempts; nothing about the attempt is recorded). Plain (no BRC-104 session, as /submit). The host checks ONE rule, the exchange's commission: when the pool's CommissionBps > 0 the Swap call's commissionPkh must be hash160 of the token instance's key for [1, \"amm commission\"], key id the pool outpoint the swap spends (`<txid>_<vout>` of the swap's input 0: a fresh key per swap, 0.21.0), counterparty anyone (derivable from the market's `identityKey` on /pools); a swap that fails it is answered `commission_missing` and nothing is relayed. Everything else is the validator's. The host signs the validator's package with the token instance's key, carries it on one libp2p stream (one request frame, one answer frame) to `peerId` — or, when `peerId` is this host's own node, hands it in as that node's inbound frame — submits a `beef` the reply carries to the token instance's overlay (another node's) and answers the validator's reply as it is. Any break in the call (dial refused, protocol not served, write failed, stream closed without an answer) is answered `unreachable` at once. The client's request is the only timer: when it closes the host stops (a dial in progress cancelled, a request not yet written never written, an open stream closed); once written, the validator answers on its stream and a signed swap reaches the overlay regardless. No retries, no record, no status read. THE BEEF RULE (0.18.0, skein 0.3.3 / skein-amm 0.45.0): a transaction the token's topic admitted (the pool output's transaction, a swap whose change or payout the taker spends) goes by txid alone (a BEEF V2 txid-only entry) — the validator's instance holds it, and skein 0.3.3's door admits a txid-only entry for a transaction the instance holds; every other transaction (the taker's own funding) raw with its ancestry back to proven (its BUMPs). A request the door would refuse (0.18.2, skein-amm 0.46.2) — a txid-only entry the validator's instance does not hold, a source neither in the BEEF nor held, a script that fails — is refused by the validator before its pool lock and its signature: `{ok: false, reason: \"bad_transaction\", detail: \"<the verifier's error>: <its meaning> (<txid or input>)\"}`, e.g. `UnknownTxidOnly: … (<txid>)`; nothing signed, nothing recorded, the pool not held.",
         "tags": [
           "host",
           "swaps"
@@ -2675,145 +2675,6 @@
         "x-cache": "none",
         "x-answered-by": "the swap app"
       }
-    },
-    "/amm/wallet": {
-      "get": {
-        "operationId": "W2",
-        "summary": "The exchange's wallet",
-        "description": "swap's core wallet as its state stands (the host reads `wallet/state`; no step): the coins its builder spends — outputs in the basket `default` with protocol `wallet payment` or `wallet change`, less those its own actions spent. `sats` their total, `outputs` their count. `withdrawals`: the admin's withdrawals (the swap app's head `amm/withdrawals`), each a standard BRC-29 payment to the admin handed over unsent — `{n, txid, sats, at, outputIndex, derivationPrefix, derivationSuffix, senderIdentityKey}`, what the admin's wallet takes it in with (internalizeAction, protocol `wallet payment`); kept when the wallet built it.",
-        "tags": [
-          "host"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "sats": {
-                      "type": "integer"
-                    },
-                    "outputs": {
-                      "type": "integer"
-                    },
-                    "withdrawals": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "n": {
-                            "type": "integer"
-                          },
-                          "txid": {
-                            "type": "string"
-                          },
-                          "sats": {
-                            "type": "integer"
-                          },
-                          "at": {
-                            "type": "integer"
-                          },
-                          "outputIndex": {
-                            "type": "integer"
-                          },
-                          "derivationPrefix": {
-                            "type": "string"
-                          },
-                          "derivationSuffix": {
-                            "type": "string"
-                          },
-                          "senderIdentityKey": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    }
-                  }
-                },
-                "example": {
-                  "sats": 0,
-                  "outputs": 0,
-                  "withdrawals": [
-                    {
-                      "n": 1,
-                      "txid": "9d2ee277a5aa05f45eed0476849d6888ade02d0e01603bcb237fa7e6f7eac26c",
-                      "sats": 1977,
-                      "at": 1793951789371,
-                      "outputIndex": 0,
-                      "derivationPrefix": "Kt2aMqdmHxNc19Dy",
-                      "derivationSuffix": "C03AgjsCs54bonOs",
-                      "senderIdentityKey": "03142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9"
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        },
-        "x-route": "W2",
-        "x-cache": "none (no Cache-Control header)",
-        "x-answered-by": "the host"
-      }
-    },
-    "/amm/wallet/tx": {
-      "get": {
-        "operationId": "W3",
-        "summary": "A withdrawal's transaction",
-        "description": "Withdrawal `n`'s Atomic BEEF, as the wallet built it: the payment the admin's wallet takes in (and sends).",
-        "tags": [
-          "host"
-        ],
-        "parameters": [
-          {
-            "name": "n",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The Atomic BEEF",
-            "content": {
-              "application/octet-stream": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "`ERR_BAD_REQUEST`",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "`ERR_NOT_FOUND`: no such withdrawal",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "x-route": "W3",
-        "x-cache": "none (no Cache-Control header)",
-        "x-answered-by": "the host"
-      }
     }
   },
   "components": {
@@ -3001,7 +2862,7 @@
         "type": "object",
         "properties": {
           "market": {
-            "$ref": "#/components/schemas/Market"
+            "$ref": "#/components/schemas/ExchangeMarket"
           },
           "validators": {
             "type": "array",
@@ -4033,6 +3894,23 @@
           "commissionTokens",
           "lastTradeAt"
         ]
+      },
+      "ExchangeMarket": {
+        "type": "object",
+        "description": "The token instance's market as the exchange answers it (0.21.0): its identity key and its minimum commission (0 when unset). The commission of a swap is paid to hash160 of the BRC-42 child of `identityKey` under [1, \"amm commission\"], key id the pool outpoint the swap spends (`<txid>_<vout>`), counterparty anyone — a fresh key per swap, derivable by anyone from the identity key.",
+        "properties": {
+          "identityKey": {
+            "type": "string",
+            "description": "The token instance's identity key, 33 bytes hex."
+          },
+          "minCommissionBps": {
+            "type": "integer"
+          }
+        },
+        "example": {
+          "identityKey": "030683a6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbcc",
+          "minCommissionBps": 1
+        }
       }
     }
   }

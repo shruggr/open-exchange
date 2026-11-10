@@ -10,7 +10,9 @@
 //       the instance's pools (its lookup ls_amm_<tokenId>, query {tokenId}) whose validator is beating
 //       on tm_color_<tokenId>-live now (the host's liveness table; the peer ID is the beat's `from`) AND
 //       whose commissionBps is at least the instance's market minimum; `market` = the instance's own
-//       answer at GET /amm/terms (`market`: {commissionPkh, minCommissionBps}); `validators` = every
+//       minimum (GET /amm/terms `market.minCommissionBps`) and its identity key (0.21.0: `market` =
+//       {identityKey, minCommissionBps}; the commission key is per swap, keyed by the pool outpoint the swap
+//       spends, derived from identityKey: host/relay.ts `commissionPkhFor`); `validators` = every
 //       validator beating on tm_color_<tokenId>-live now (identity hex, peer ID the beat's `from`, and
 //       0.14.0 `minLegSats` = the beat body's `terms.minLegSats` when its terms carry one), whatever its pools.
 //   GET <origin>/amm/pools      [{tokenId, …the row above}]   every enabled token instance's, one array.
@@ -79,7 +81,7 @@ export interface PoolRow {
   /** 0.19.0 (skein-amm 0.47.0): the pool's counters, as the lookup's row carries them. */
   lifetime?: unknown;
 }
-export interface Market { commissionPkh?: unknown; minCommissionBps?: unknown }
+export interface Market { identityKey: string; minCommissionBps?: unknown }
 export interface Validator { identity: string; peerId: string; minLegSats?: number | bigint }
 export interface TokenPools { market: Market; validators: Validator[]; pools: PoolRow[] }
 
@@ -303,8 +305,9 @@ export class Pools {
   async tokenPools(id: string): Promise<TokenPools> {
     const answer = await this.instanceRead(id, "POST", "lookup", { service: `ls_amm_${id}`, query: { tokenId: id } }) as { type?: string; result?: unknown };
     if (answer?.type !== "freeform" || !Array.isArray(answer.result)) throw new ReadError(502, `ls_amm_${id} {tokenId}: not a freeform list (${JSON.stringify(answer).slice(0, 200)})`);
-    const terms = await this.instanceRead(id, "GET", "terms") as { market?: Market };
-    const market: Market = terms?.market && typeof terms.market === "object" ? terms.market : {};
+    const terms = await this.instanceRead(id, "GET", "terms") as { market?: { minCommissionBps?: unknown } };
+    const identityKey = (await this.router.hydrate(id)).identity;
+    const market: Market = { identityKey, ...(terms?.market && typeof terms.market === "object" && terms.market.minCommissionBps !== undefined ? { minCommissionBps: terms.market.minCommissionBps } : {}) };
     const min = num(market.minCommissionBps);
     const live = this.beating(id);
     const pools: PoolRow[] = [];

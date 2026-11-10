@@ -22,8 +22,9 @@
 //   1. the commission rule (skein-amm programs/amm-p2p/README.md "The commission rule"; amm-p2p 0.43.0 `checkPair`'s
 //      `commission_missing`): input 0's unlocking script a Rúnar Swap call (13 pushes, the method 0), output 0 the
 //      pool's continuation; its CommissionBps > 0 → the call's commissionPkh (push 6) must be hash160 of the token
-//      instance's own key for [1, "amm commission"], key ID "relay", counterparty anyone, forSelf. Nothing else is
-//      checked: everything else is the validator's.
+//      instance's own key for [1, "amm commission"], key ID the pool outpoint the swap spends (`<txid>_<vout>` of
+//      input 0; 0.21.0: a fresh key per swap, HANDOFF-2026-11-09 WALLET + SIGNER point 8), counterparty anyone,
+//      forSelf. Nothing else is checked: everything else is the validator's.
 //   2. the validator's package (amm-validator README "A direct call"): {message, body, topic} — the mail record signed
 //      BRC-169's way by the token instance's key through the host's key holder, outside any step (Router.signMessage),
 //      recipient the validator, box "swap", nonce the first 16 bytes of sha256("amm-swap-relay" ‖ sha256(swap)); the
@@ -42,7 +43,7 @@
 // closes, `signal` fires and the host stops — a dial in progress cancelled, a request not yet written never written,
 // an open stream closed. Once written it is delivered: the validator answers on its stream; a signed swap lands on the
 // overlay and the page's settle pass finds it. No retries, no re-offer, no host timers, nothing resumes after a restart.
-import { Beef, Hash, Transaction, Utils } from "@bsv/sdk";
+import { Beef, Hash, KeyDeriver, PrivateKey, Transaction, Utils } from "@bsv/sdk";
 import { PARAM_ASSET_ID, PARAM_COMMISSION_BPS, PARAM_LP_FEE_BPS, PARAM_VALIDATOR_FEE_BPS, POOL_SLOTS, POOL_TEMPLATE_HEX } from "./pool-code.ts";
 import type { Router, Skein } from "./skein.ts";
 
@@ -56,9 +57,22 @@ const OUTPOINT = /^[0-9a-f]{64}_(0|[1-9]\d{0,9})$/;
 export const SWAP_ROUTE = "/amm/swap";
 /** The validator's direct call (amm-validator's libp2p row). */
 export const SWAP_PROTOCOL = "/amm-validator/1/swap";
-/** The commission key (skein-amm amm-p2p interface.zig `commission_protocol`, `commission_key_id`). */
+/** The commission key's protocol (skein-amm amm-p2p interface.zig `commission_protocol`). 0.21.0: its key ID is the
+ *  pool outpoint the swap spends (`commissionKeyId`), no longer the constant "relay". */
 export const COMMISSION_PROTOCOL: [1, string] = [1, "amm commission"];
-export const COMMISSION_KEY_ID = "relay";
+/** The commission key ID of a swap: the outpoint its input 0 spends (the pool), `<txid>_<vout>` (skein-amm src/pool.zig `keyId`). */
+export const commissionKeyId = (swap: Transaction): string => {
+  const i = swap.inputs[0];
+  if (!i) throw new Error("the swap has no input 0 (the pool)");
+  const txid = i.sourceTXID ?? i.sourceTransaction?.id("hex");
+  if (!txid) throw new Error("the swap's input 0 names no source transaction");
+  return `${txid}_${i.sourceOutputIndex}`;
+};
+/** hash160 of the commission key for `keyId` under the market's identity key, as anyone derives it (BRC-42, the anyone key as the counterparty). */
+export const commissionPkhFor = (identityKey: string, keyId: string): Uint8Array => {
+  const child = new KeyDeriver(new PrivateKey(1)).derivePublicKey(COMMISSION_PROTOCOL, keyId, identityKey, false);
+  return Uint8Array.from(Hash.hash160(child.encode(true) as number[]));
+};
 /** A Swap call's pushes (src/pool.zig `swap_pushes`): `_codePart, validatorSig, nextValidatorPubKey, amountIn, bsvIn,
  *  userPkh, commissionPkh, tokenChangePkh, tokenChange, _changePKH, _changeAmount, txPreimage, methodIndex`. */
 const SWAP_PUSHES = 13;
@@ -315,7 +329,7 @@ export class Relay {
 
     // 1. The commission rule (the one check that is the exchange's).
     let ours: Uint8Array;
-    try { ours = await this.commissionPkh(tokenId); } catch (e) { return problem(503, "ERR_UNAVAILABLE", `this exchange's commission key: ${(e as Error).message}`); }
+    try { ours = await this.commissionPkh(tokenId, commissionKeyId(swap)); } catch (e) { return problem(503, "ERR_UNAVAILABLE", `this exchange's commission key: ${(e as Error).message}`); }
     const refused = commissionRule(swap, ours);
     if (refused) { this.o.log(`${tokenId}: swap on ${pool}: refused, nothing relayed (${refused.reason}: ${refused.detail})`); return answer(200, { ok: false, ...refused }); }
 
@@ -354,10 +368,10 @@ export class Relay {
     return answer(200, reply);
   }
 
-  /** hash160 of the token instance's own key for the commission (its signer: [1, "amm commission"], "relay", anyone, forSelf). */
-  private async commissionPkh(tokenId: string): Promise<Uint8Array> {
+  /** hash160 of the token instance's own key for this swap's commission (its signer: [1, "amm commission"], the pool outpoint, anyone, forSelf). */
+  private async commissionPkh(tokenId: string, keyId: string): Promise<Uint8Array> {
     const l = await this.r.hydrate(tokenId);
-    const { publicKey } = await l.wallet.getPublicKey({ protocolID: COMMISSION_PROTOCOL, keyID: COMMISSION_KEY_ID, counterparty: "anyone", forSelf: true });
+    const { publicKey } = await l.wallet.getPublicKey({ protocolID: COMMISSION_PROTOCOL, keyID: keyId, counterparty: "anyone", forSelf: true });
     return Uint8Array.from(Hash.hash160(Utils.toArray(publicKey, "hex")));
   }
 
