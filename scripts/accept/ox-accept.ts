@@ -568,7 +568,7 @@ try {
     const sub = await submitB(n);
     const e = await until(`B's pool event ${kind} (${n})`, () => fB.got.length > k && fAll.got.length > k ? fB.got[k] : undefined, 30_000);
     const same = !!e && JSON.stringify(e) === JSON.stringify(fAll.got[k]);
-    check(sub.status === 200 && e?.kind === kind && e.tokenId === B && e.poolId === poolB && e.txid === ftx.get(n)!.id("hex") && same, `${n} submitted to ${tmB.slice(0, 18)}… (${sub.status} ${sub.text.slice(0, 80)}): both feeds sent event pool {tokenId B, kind ${kind}, poolId the deploy's outpoint, txid} (${JSON.stringify(e)?.slice(0, 200)})`);
+    check(sub.status === 200 && e?.type === kind && e.tokenId === B && e.poolId === poolB && e.txid === ftx.get(n)!.id("hex") && same, `${n} submitted to ${tmB.slice(0, 18)}… (${sub.status} ${sub.text.slice(0, 80)}): both feeds sent event pool {tokenId B, kind ${kind}, poolId the deploy's outpoint, txid} (${JSON.stringify(e)?.slice(0, 200)})`);
     return e;
   };
   const eDeploy = await expectEvent("pool_deploy", "deploy", 0);
@@ -590,13 +590,13 @@ try {
   const before = await at(atD - 1), afterBuy = await at(atBuy), afterClose = await at(atClose);
   check(before?.length === 0 && afterBuy?.length === 1 && afterBuy[0]!.poolId === poolB && afterBuy[0]!.outpoint === opOf("swap_bsv_in") && afterBuy[0]!.swaps === 1 && afterClose?.length === 0, `GET /@<B>/amm/pools/at: none before the deploy, the bsv-in swap's state at its time, none at the close (${JSON.stringify(afterBuy)?.slice(0, 160)})`);
   const hist = await getJson(`/@${B}/amm/pools/history?from=0`) as { events?: Array<Record<string, unknown>>; next?: unknown } | undefined;
-  check(hist?.events?.map((e) => e.kind).join() === "deploy,swap,swap,close" && hist.next === null, `GET /@<B>/amm/pools/history: deploy, swap, swap, close, next null (${hist?.events?.map((e) => e.kind).join()})`);
+  check(hist?.events?.map((e) => e.type).join() === "deploy,swap,swap,close" && hist.next === null, `GET /@<B>/amm/pools/history: deploy, swap, swap, close, next null (${hist?.events?.map((e) => e.type).join()})`);
   const page1 = await getJson(`/@${B}/amm/pools/history?from=0&limit=1`) as { events?: unknown[]; next?: string } | undefined;
   const page2 = page1?.next ? await getJson(`/@${B}/amm/pools/history?from=0&limit=3&after=${page1.next}`) as { events?: Array<Record<string, unknown>>; next?: unknown } | undefined : undefined;
-  check(page1?.events?.length === 1 && typeof page1.next === "string" && page2?.events?.map((e) => e.kind).join() === "swap,swap,close" && page2.next === null, "…?limit=1 then ?after=<next>: the rest of the window, once each");
+  check(page1?.events?.length === 1 && typeof page1.next === "string" && page2?.events?.map((e) => e.type).join() === "swap,swap,close" && page2.next === null, "…?limit=1 then ?after=<next>: the rest of the window, once each");
   const histAfterDeploy = await getJson(`/@${B}/amm/pools/history?outpoint=${poolB}`) as { events?: Array<Record<string, unknown>>; next?: unknown } | undefined;
   const histAfterBuy = await getJson(`/@${B}/amm/pools/history?outpoint=${opOf("swap_bsv_in")}`) as { events?: Array<Record<string, unknown>> } | undefined;
-  check(histAfterDeploy?.events?.map((e) => e.kind).join() === "swap,swap,close" && histAfterDeploy.next === null && histAfterBuy?.events?.map((e) => e.kind).join() === "swap,close" && (await get(`/@${B}/amm/pools/history?outpoint=${"ab".repeat(32)}_0`)).status === 404, `…?outpoint= starts strictly after that output (deploy → ${histAfterDeploy?.events?.map((e) => e.kind).join()}; first swap → ${histAfterBuy?.events?.map((e) => e.kind).join()}); an unknown outpoint is 404`);
+  check(histAfterDeploy?.events?.map((e) => e.type).join() === "swap,swap,close" && histAfterDeploy.next === null && histAfterBuy?.events?.map((e) => e.type).join() === "swap,close" && (await get(`/@${B}/amm/pools/history?outpoint=${"ab".repeat(32)}_0`)).status === 404, `…?outpoint= starts strictly after that output (deploy → ${histAfterDeploy?.events?.map((e) => e.type).join()}; first swap → ${histAfterBuy?.events?.map((e) => e.type).join()}); an unknown outpoint is 404`);
 
   const tr = await fetch(`${R}/@${B}/amm/trades`);
   const trj = await tr.json().catch(() => ({})) as { trades?: Array<Record<string, unknown>>; next?: unknown };
@@ -677,8 +677,8 @@ try {
       for (const [n, kind] of [["pool_deploy", "deploy"], ["swap_bsv_in", "swap"], ["swap_token_change", "swap"], ["close_after_token_change", "close"]] as const) {
         const st = await submit2(n);
         const e = await until(`second host: ${n}'s event`, () => feed2.got.find((y) => y.txid === ftx.get(n)!.id("hex")), 30_000);
-        check(st === 200 && e?.kind === kind && e.poolId === poolB, `second host: ${n} submitted (${st}): event pool {kind ${String(e?.kind)}, poolId the deploy's}`);
-        if (e) kinds.push(String(e.kind));
+        check(st === 200 && e?.type === kind && e.poolId === poolB, `second host: ${n} submitted (${st}): event pool {type ${String(e?.type)}, poolId the deploy's}`);
+        if (e) kinds.push(String(e.type));
       }
       const tcTx = ftx.get("swap_token_change")!;
       const tcAmount = Number(/pub const swap_token_change_amount_in = (\d+);/.exec(fixturesZig)?.[1]);
@@ -689,7 +689,7 @@ try {
       check(trTc?.side === "sell" && trTc.amountIn === tcAmount && trTc.poolId === poolB, `…its trade row: amountIn ${String(trTc?.amountIn)}, poolId the deploy's`);
       const atTc = await get2(`/@${B}/amm/pools/at?t=${Number(eTc?.at)}`) as Array<Record<string, unknown>> | undefined;
       const hist2 = await get2(`/@${B}/amm/pools/history?from=0`) as { events?: Array<Record<string, unknown>> } | undefined;
-      check(atTc?.length === 1 && atTc[0]!.outpoint === `${tcTx.id("hex")}_0` && hist2?.events?.map((e) => e.kind).join() === "deploy,swap,swap,close" && kinds.join() === "deploy,swap,swap,close", `…/pools/at the token-change swap's state at its time; /pools/history deploy, swap, swap, close (${hist2?.events?.map((e) => e.kind).join()})`);
+      check(atTc?.length === 1 && atTc[0]!.outpoint === `${tcTx.id("hex")}_0` && hist2?.events?.map((e) => e.type).join() === "deploy,swap,swap,close" && kinds.join() === "deploy,swap,swap,close", `…/pools/at the token-change swap's state at its time; /pools/history deploy, swap, swap, close (${hist2?.events?.map((e) => e.type).join()})`);
       const sp2 = await get2(`/amm/spends?outpoint=${ftx.get("swap_bsv_in")!.id("hex")}.0`) as Array<{ spentBy?: string }> | undefined;
       check(sp2?.[0]?.spentBy === tcTx.id("hex"), `…/amm/spends: swap_bsv_in:0 spent by the token-change swap here (${String(sp2?.[0]?.spentBy).slice(0, 8)}…)`);
       await feed2.close();
@@ -931,7 +931,7 @@ try {
         // app — the validator fee (this host's validator) and the commission (this exchange's per-swap key) — basket
         // bsv (a buy pays its fees in sats); the token fee tally read.
         const hops = await get3(`/@${B}/events/amm/hop`) as Array<{ record?: Record<string, unknown> }> | undefined;
-        const hop = hops?.map((h) => h.record ?? {}).find((r) => r.txid === w1 && r.kind === "swap");
+        const hop = hops?.map((h) => h.record ?? {}).find((r) => r.txid === w1 && r.type === "swap");
         const fv = (hop?.feeVouts ?? {}) as { validator?: number; commission?: number };
         check(!!hop && typeof fv.validator === "number" && typeof fv.commission === "number", `amm/hop: the accepted swap's row, feeVouts ${JSON.stringify(fv)}`);
         const wo = await get3(`/@${B}/wallet/outputs?basket=bsv`) as { outputs?: Array<{ outpoint?: string }> } | undefined;

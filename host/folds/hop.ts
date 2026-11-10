@@ -3,11 +3,12 @@
 // `amm/hop` (every hop, log order) and `amm/pool/<poolId>`. THIS FILE IS THE ONE PLACE the recognizer's record field
 // names are read: when its report lands, the names are fixed here and nowhere else.
 //
-// The recognizer's row (skein-amm branch `recognizers` 24f08f1, 0.49.0): `kind` deploy|swap|close|rescind, `txid`,
+// The recognizer's row (skein-amm 0.49.0, release-0.49 bfdab2e): `type` deploy|swap|close|rescind (was `kind`: the
+// kernel reserves `kind` and `app` on an emitted record), `txid`,
 // `tokenId`, `poolId`, `outpoint?`, `bsvReserve?`, `tokenReserve?`, `lpPubKey`, `liquidityFeeBps`, `validationFeeBps`,
 // `commissionBps`, `validatorIdentityKey`, `at` (ms), `swaps`, `keyId?`; a swap adds `side`, `amountIn`, `amountOut`,
 // `feeLp`, `feeValidator`, `feeCommission`, `commissionPkh`, `payoutPkh`, `feeVouts {lp?, validator?, commission?}`.
-// A REVERT is `{kind: "revert", txid: <the unwound tx>, tokenId, poolId, at}` plus the pool's fields as it stands after
+// A REVERT is `{type: "revert", txid: <the unwound tx>, tokenId, poolId, at}` plus the pool's fields as it stands after
 // the undo (none when the pool is gone). Rows are also under `amm/pool/<txid>_<vout>` and `amm/output/<txid>.<vout>`.
 import type { Rec } from "../events.ts";
 
@@ -56,7 +57,7 @@ const KINDS = new Set<Kind>(["deploy", "swap", "close", "rescind", "revert"]);
 
 /** A hop from its record, or undefined when the record is not one. */
 export function hopOf(rec: Rec, place = ""): Hop | undefined {
-  const kind = text(rec.kind) as Kind | undefined;
+  const kind = text(rec.type) as Kind | undefined;
   const txid = text(rec.txid), poolId = text(rec.poolId);
   if (!kind || !KINDS.has(kind) || !txid || !poolId) return undefined;
   const side = rec.side === "buy" || rec.side === "sell" ? rec.side : undefined;

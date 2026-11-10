@@ -191,9 +191,9 @@ export function marketCandles(start: Rec[], events: Rec[], tf: number): MarketCa
       cur = { t, prices: entering ? [entering] : [], volumeSats: 0n, volumeTokens: 0n, n: 0 };
     }
     const id = String(ev.poolId);
-    if (ev.kind === "deploy" || ev.kind === "swap") pools.set(id, poolState(ev));
-    else if (ev.kind === "close" || ev.kind === "rescind") pools.delete(id);
-    if (ev.kind === "swap") {
+    if (ev.type === "deploy" || ev.type === "swap") pools.set(id, poolState(ev));
+    else if (ev.type === "close" || ev.type === "rescind") pools.delete(id);
+    if (ev.type === "swap") {
       const inn = big(ev.amountIn), outt = big(ev.amountOut);
       const [s, k] = ev.side === "buy" ? [inn, outt] : [outt, inn];
       if (k !== 0n) { cur.volumeSats += s; cur.volumeTokens += k; cur.n += 1; }
