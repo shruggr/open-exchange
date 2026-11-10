@@ -25,6 +25,7 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Exchange, DISCOVERY, DISCOVERY_TOPICS, SWAP } from "./exchange.ts";
 import { Relay } from "./relay.ts";
+import { Door } from "./door.ts";
 import { Pools } from "./pools.ts";
 import { IMAGES_DIR, load, skeinVersion, type Router, type Skein } from "./skein.ts";
 
@@ -76,38 +77,41 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   const key = hostKey(sk, env.vars);
   mkdirSync(home, { recursive: true });
   const db = new sk.instances.HostDb(join(home, "host.db"));
-  // Events handed over before the reactions exist (a kernel's start) wait for them.
   let ex: Exchange | undefined;
-  const early: Array<[string, Record<string, unknown>]> = [];
   // 0.11.0: the pool reads (pools.ts) — GET /amm/pools and /@<tokenId>/amm/pools, the host's (skein's appRead);
   // 0.13.0: GET /amm/stats and /amm/positions too; 0.14.0: /amm/spends, the market candles and the pool event
-  // feeds (a token instance's emitted `pool` event goes to the feeds, not to swap's reactions).
+  // feeds; 0.21.0: the trades, candles, /pools/at, /pools/history and positions too, all from the host's folds of the
+  // token instances' `amm/hop` events (no `appEvent`: the host follows the event indexes it needs).
   let pools: Pools | undefined;
   // 0.17.0 (skein-amm 0.44.0): POST /@<tokenId>/amm/swap, the swap relay (relay.ts), the request's close its only timer.
   // skein 0.3.2: the hook is offered EVERY method, and `req.signal` fires when the client closes before the answer.
   // The reads below are GETs only: a POST to one of their routes is forwarded to the instance as before.
   let relay: Relay | undefined;
+  // 0.21.0: POST /submit, the host's own door (door.ts): the verdict event answers it.
+  let door: Door | undefined;
   const appRead = async (h: string, route: string, url: URL, req: Parameters<Pools["appRead"]>[3]) =>
     (await relay?.route(h, route, req, req.signal)) ??
+    (await door?.route(h, route, req, req.signal)) ??
     (req.method !== "GET" ? undefined : await pools?.appRead(h, route, url, req));
-  const appEvent = (h: string, rec: Record<string, unknown>) => {
-    if (pools?.poolEvent(h, rec)) return;
-    if (ex) ex.event(h, rec); else early.push([h, rec]);
-  };
-  const host = await sk.cli.runHost(db, env, { router: { ...o.router, appRead, appEvent } });
+  const host = await sk.cli.runHost(db, env, { router: { ...o.router, appRead } });
   const log = (l: string) => env.out(`[open-exchange] ${l}`);
   pools = new Pools(host.router, log, sk.cid.decode);
-  relay = new Relay({ router: host.router, sk, log });
+  door = new Door(host.router, log);
+  relay = new Relay({ router: host.router, sk, log, door });
   const pl = pools;
   ex = new Exchange({ sk, router: host.router, hostKey: key.identity, hostWallet: key.wallet, log, ...(o.swapAppDir ? { swapAppDir: o.swapAppDir } : {}), ...(o.imagesDir ? { imagesDir: o.imagesDir } : {}) });
-  env.out(`open-exchange: swap's events wired (token-enabled, token-disabled, discovery-on, discovery-off, claimed) · skein ${skeinVersion()} · images ${IMAGES_DIR} · the host's key ${key.identity.slice(0, 8)}…`);
-  for (const [h, rec] of early.splice(0)) ex.event(h, rec);
+  // 0.21.0: swap's facts followed from its event index from now (amm/token/…, amm/token-terms/…, amm/discovery,
+  // amm/claim); what came before, the reconcile reads from swap's heads. The token instances' folds replayed.
+  let unwatch: (() => void) | undefined;
+  try { unwatch = await ex.watch(); } catch (e) { env.err(`open-exchange: swap's events NOT followed: ${(e as Error).message}`); }
+  env.out(`open-exchange: swap's events wired (amm/token, amm/token-terms, amm/discovery, amm/claim) · skein ${skeinVersion()} · images ${IMAGES_DIR} · the host's key ${key.identity.slice(0, 8)}…`);
+  void pools.follow();
   void ex.updateSwap();
   void ex.reconcile();
   // 0.20.1: the token instances' and discovery's packaged apps in place (0.21.0: no reindex).
   void ex.updateInstances();
   const exchange = ex;
-  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { await exchange.idle(); pl.stop(); await host.stop(); db.close(); } };
+  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { unwatch?.(); await exchange.idle(); pl.stop(); await host.stop(); db.close(); } };
 }
 
 async function run(sk: Skein, given: Env, rest: string[]): Promise<number> {

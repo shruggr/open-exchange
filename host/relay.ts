@@ -34,8 +34,8 @@
 //      when peerId is this host's own node, handed in as that node's inbound frame (Router.p2pInbound), as any other
 //      peer's frame would be.
 //   4. a reply carrying `beef` (an accepted swap's, a pool_spent refusal's newest state) from ANOTHER node: submitted
-//      to the token instance's overlay (in process, POST /submit with the token topic) and its answer awaited before
-//      the page is answered, so the page's next pools read reflects it. (The local validator's submission is this
+//      to the token instance's overlay through the host's door (0.21.0, door.ts: the submit message as the instance,
+//      its verdict `amm/topic/tx/<T>` awaited) before the page is answered, so the page's next pools read reflects it. (The local validator's submission is this
 //      overlay's already.)
 //   5. the page answered.
 //
@@ -46,6 +46,7 @@
 import { Beef, Hash, KeyDeriver, PrivateKey, Transaction, Utils } from "@bsv/sdk";
 import { PARAM_ASSET_ID, PARAM_COMMISSION_BPS, PARAM_LP_FEE_BPS, PARAM_VALIDATOR_FEE_BPS, POOL_SLOTS, POOL_TEMPLATE_HEX } from "./pool-code.ts";
 import type { Router, Skein } from "./skein.ts";
+import type { Door } from "./door.ts";
 
 type RouterRequest = import("@dcasegr/skein/dist/host/router.js").RouterRequest;
 type RouterResponse = import("@dcasegr/skein/dist/host/router.js").RouterResponse;
@@ -294,6 +295,8 @@ export interface RelayHost {
   router: Router;
   sk: Skein;
   log(line: string): void;
+  /** 0.21.0: the host's /submit door (door.ts): the validator's BEEF goes in through it and its verdict is awaited. */
+  door?: Door;
 }
 
 export class Relay {
@@ -362,7 +365,7 @@ export class Relay {
     }
 
     // 4. Its BEEF into this overlay first (another node's state), so the page's next read reflects it.
-    if (!local && reply.beef instanceof Uint8Array && reply.beef.length) await this.submit(tokenId, reply.beef);
+    if (!local && reply.beef instanceof Uint8Array && reply.beef.length) await this.submit(tokenId, reply.beef, signal);
     this.o.log(`${tokenId}: swap on ${pool} via ${local ? "this node's validator" : peerId}: ${reply.ok ? `accepted ${String(reply.txid).slice(0, 8)}…` : `refused ${String(reply.reason)}`}`);
     // 5. The validator's reply as it is.
     return answer(200, reply);
@@ -387,8 +390,17 @@ export class Relay {
     return a.body;
   }
 
-  /** The validator's BEEF to the token instance's overlay, in process (POST /submit, the token topic); its answer awaited. */
-  private async submit(tokenId: string, beef: Uint8Array): Promise<void> {
+  /**
+   * The validator's BEEF to the token instance's overlay (0.21.0: through the host's door — the submit message as the
+   * instance, the verdict `amm/topic/tx/<T>` awaited, the page's connection the only timer; HANDOFF-2026-11-09 "A host
+   * that CALLS submit itself … waits on `<app>/topic/tx/<T>`"). Without a door: the instance's POST /submit, as before.
+   */
+  private async submit(tokenId: string, beef: Uint8Array, signal?: AbortSignal): Promise<void> {
+    if (this.o.door) {
+      const v = await this.o.door.submit(tokenId, beef, `tm_color_${tokenId}`, signal).catch((e: Error) => ({ verdict: "refused", status: 0, reason: e.message }) as const);
+      if (v.verdict !== "admitted") this.o.log(`${tokenId}: the validator's BEEF into this overlay: ${v.verdict}${"reason" in v ? `: ${v.reason}` : ""}`);
+      return;
+    }
     const r = await this.r.dispatch({
       method: "POST", url: `${this.r.origin()}/@${tokenId}/submit`,
       headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([`tm_color_${tokenId}`]) }, body: beef,

@@ -1,22 +1,23 @@
 // The Open Exchange host's reactions (shruggr/open-exchange#1, shruggr/skein#164). The swap instance
-// records root's decisions as facts and emits each as an event; the host — this — materializes them.
+// records root's decisions as facts and emits each as an event (0.21.0: under the swap app's name, one name
+// per item, followed from swap's event index — `watch`); the host — this — materializes them.
 // Nothing answers back: swap's log is the fact, the host's instance table is derived state, rebuilt
 // from swap's heads at every start (`reconcile`).
 //
-//   token-enabled {tokenId, beef, terms?, market?}   no instance <tokenId>: one from the image `token`,
+//   amm/token/<tokenId> {state: enabled, tokenId, beef, terms?, market?}   no instance <tokenId>: one from the image `token`,
 //       born owned by the host's key (#164), routed by [tm_color_<id>, ls_color_<id>, ls_amm_<id>],
 //       created DISABLED; the deploy fed in as the event {kind: "deploy", beef} in amm/deploy (the
 //       door checks the BEEF, #121); admitted → published (enabled), then `terms` and `market` as
 //       root's messages (signed by the host's key) into amm/validator and amm/amm-p2p; refused at
-//       the door → the instance removed (a file store), or left disabled (a store in the host's
-//       RocksDB/LMDB database: its set cannot be removed, so the handle cannot be created again).
+//       the door → the instance left disabled (0.21.0: skein has no instance removal; an enable with a
+//       good BEEF feeds it).
 //       An instance there already: started if stopped, its deploy fed in if it has no token yet.
-//   token-disabled {tokenId}      the instance stopped (disabled; its libp2p node left). Not removed.
-//   token-terms {tokenId, terms}  (0.12.0; 0.14.0 terms may carry minLegSats) root's terms for one token: sent to its instance as root's
+//   amm/token/<tokenId> {state: disabled, tokenId}   the instance stopped (disabled; its libp2p node left). Not removed.
+//   amm/token-terms/<tokenId> {tokenId, terms}  (0.12.0; 0.14.0 terms may carry minLegSats) root's terms for one token: sent to its instance as root's
 //       `terms` message into amm/validator (`terms` a map, or null = market only), as at creation. No
 //       instance: logged, nothing else. Not replayed at start: the instance keeps its own amm/terms.
-//   discovery-on / discovery-off  the instance `discovery` (made on the first run) started / stopped.
-//   claimed {claimant}            (0.5.0) the first wallet's claim on swap: the role `amm.admin` granted to
+//   amm/discovery {on}           the instance `discovery` (made on the first run) started / stopped.
+//   amm/claim {claimant}         (0.5.0) the first wallet's claim on swap: the role `amm.admin` granted to
 //       the claimant on swap by root's `grant` (the host's key is root on swap: swap is born owned by
 //       it); the claimant configures (the box amm/admin), it is not root. Already granted: nothing sent.
 //
@@ -35,6 +36,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { IMAGES_DIR, SWAP_APP_DIR, swapAppVersion, type Router, type Skein } from "./skein.ts";
+import { followNew, latest } from "./events.ts";
 
 export const SWAP = "swap";
 export const DISCOVERY = "discovery";
@@ -45,6 +47,12 @@ export const TOKEN_IMAGE = "token";
 export const ADMIN_ROLE = `${SWAP_APP}.admin`;
 const KEY = /^0[23][0-9a-f]{64}$/;
 const TOKEN_ID = /^[0-9a-f]{64}_\d+$/;
+
+/** swap's event names (0.21.0): one per item, the latest its state. */
+export const TOKEN_EVENT = `${SWAP_APP}/token/`;
+export const TERMS_EVENT = `${SWAP_APP}/token-terms/`;
+export const DISCOVERY_EVENT = `${SWAP_APP}/discovery`;
+export const CLAIM_EVENT = `${SWAP_APP}/claim`;
 
 export const tokenTopics = (id: string) => [`tm_color_${id}`, `ls_color_${id}`, `ls_amm_${id}`];
 export const DISCOVERY_TOPICS = ["tm_color", "ls_color"];
@@ -91,22 +99,30 @@ export class Exchange {
     queues: Map<string, Promise<unknown>>;
   } { return this.r as unknown as never; }
 
-  /** An emitted event from `handle` (Router `appEvent`): swap's, by its app; queued. */
-  event(handle: string, rec: Rec): void {
-    if (handle !== SWAP || rec.app !== SWAP_APP) { this.say(`${handle}: event ${String(rec.event)}${rec.app ? ` (app ${String(rec.app)})` : ""}: not swap's: ignored`); return; }
-    const name = String(rec.event);
+  /**
+   * 0.21.0: swap's facts, followed from swap's event index (skein >= 0.5.0) instead of `appEvent` (which hands the
+   * host EVERY instance's events): the names under the swap app's own `amm/`, from NOW (what is already there the
+   * reconcile reads). One name per item, its latest event the item's state:
+   *   amm/token/<tokenId>        {state: enabled | disabled, tokenId, beef?, terms?, market?}
+   *   amm/token-terms/<tokenId>  {tokenId, terms}
+   *   amm/discovery              {on}
+   *   amm/claim                  {claimant}
+   * Returns the function that stops following.
+   */
+  async watch(): Promise<() => void> {
+    return await followNew(this.r, SWAP, { name: `${SWAP_APP}/`, prefix: true }, (name, rec) => this.event(name, rec), () => this.say(`${SWAP}: its event stream ended (the instance stopped)`));
+  }
+
+  /** One of swap's facts by its name; queued. */
+  event(name: string, rec: Rec): void {
     const run = (): Promise<void> => {
-      switch (name) {
-        case "token-enabled": return this.tokenEnabled(rec);
-        case "token-disabled": return this.tokenDisabled(rec);
-        case "token-terms": return this.tokenTerms(rec);
-        case "discovery-on": return this.discovery(true);
-        case "discovery-off": return this.discovery(false);
-        case "claimed": return this.claimed(rec);
-        default: this.say(`swap: event ${name}: no reaction`); return Promise.resolve();
-      }
+      if (name.startsWith(TOKEN_EVENT)) return rec.state === "disabled" ? this.tokenDisabled(rec) : rec.state === "enabled" ? this.tokenEnabled(rec) : Promise.resolve(this.say(`swap: ${name}: state ${String(rec.state)}: no reaction`));
+      if (name.startsWith(TERMS_EVENT)) return this.tokenTerms(rec);
+      if (name === DISCOVERY_EVENT) return this.discovery(rec.on === true);
+      if (name === CLAIM_EVENT) return this.claimed(rec);
+      return Promise.resolve();
     };
-    this.enqueue(`${name}${typeof rec.tokenId === "string" ? ` ${rec.tokenId}` : ""}`, run);
+    this.enqueue(name, run);
   }
 
   private enqueue(what: string, f: () => Promise<void>): Promise<void> {
@@ -140,14 +156,9 @@ export class Exchange {
     const t0 = Date.now();
     await this.r.createInstance(id, this.o.hostKey, { image: TOKEN_IMAGE, owned: true, publish: false, topics: tokenTopics(id) });
     if (!(await this.feedDeploy(id, beef))) {
-      const store = db.get(id)?.store ?? "";
-      if (/^(rocksdb|lmdb):/.test(store)) {
-        await this.stop(id);
-        this.say(`${id}: its deploy refused: the instance left DISABLED (its set in ${store.replace(/#.*/, "")} cannot be removed, so the handle cannot be created again; an enable with a good BEEF feeds it)`);
-      } else {
-        await this.r.reclaim(id);
-        this.say(`${id}: its deploy refused: the instance removed`);
-      }
+      // skein 0.6.x (billing out) has no instance removal: left DISABLED; an enable with a good BEEF feeds it.
+      await this.stop(id);
+      this.say(`${id}: its deploy refused: the instance left DISABLED (an enable with a good BEEF feeds it)`);
       return;
     }
     await this.start(id, tokenTopics(id));
@@ -408,8 +419,8 @@ export class Exchange {
 
   /**
    * At start: the instance table rebuilt from swap's heads — /amm/tokens (enabled → running, its
-   * deploy fed if it has no instance yet: the BEEF from swap's last token-enabled event for it, read
-   * from swap's log; disabled → stopped) and /amm/discovery (on → running, else stopped). Creates
+   * deploy fed if it has no instance yet: the BEEF from swap's latest `amm/token/<tokenId>` event, read
+   * from swap's event index; disabled → stopped) and /amm/discovery (on → running, else stopped). Creates
    * nothing that exists; queued like the events.
    */
   reconcile(): Promise<void> {
@@ -417,16 +428,14 @@ export class Exchange {
       const swap = this.r.o.db.get(SWAP);
       if (!swap || swap.status !== "enabled") { this.say(`reconcile: no enabled instance ${SWAP} (the first run makes it): nothing to reconcile`); return; }
       const tokens = await this.swapRead("tokens") as Array<{ tokenId?: string; status?: string }>;
-      let events: Map<string, Rec> | undefined;
       for (const t of tokens) {
         const id = t.tokenId ?? "";
         if (!TOKEN_ID.test(id)) continue;
         const row = this.r.o.db.get(id);
         if (t.status === "enabled") {
           if (row && row.status === "enabled" && await this.hasToken(id)) continue;
-          events ??= await this.enabledEvents();
-          const ev = events.get(id);
-          await this.tokenEnabled({ ...(ev ?? {}), tokenId: id }).catch((e) => this.say(`reconcile ${id}: ${(e as Error).message}`));
+          const ev = await latest(this.r, SWAP, `${TOKEN_EVENT}${id}`).catch(() => undefined);
+          await this.tokenEnabled({ ...(ev?.state === "enabled" ? ev : {}), tokenId: id }).catch((e) => this.say(`reconcile ${id}: ${(e as Error).message}`));
         } else if (t.status === "disabled" && row?.status === "enabled") {
           await this.tokenDisabled({ tokenId: id });
         }
@@ -443,14 +452,4 @@ export class Exchange {
   // A token-terms event is not replayed here: the token instance keeps its own amm/terms across restarts.
 
   /** swap's last token-enabled event per token id, from its log (the host recovers by reading the log, docs/VM.md "Events are open"). */
-  private async enabledEvents(): Promise<Map<string, Rec>> {
-    const row = this.r.o.db.get(SWAP)!;
-    const st = this.o.sk.stores.openStoreFile(this.o.sk.indexStore.storeSpec(row), { readOnly: true });
-    try {
-      const found = await this.o.sk.p2p.emittedEvents(st, (rec) => rec.app === SWAP_APP && rec.event === "token-enabled" && typeof rec.tokenId === "string" ? rec : undefined);
-      const out = new Map<string, Rec>();
-      for (const r of found) out.set(r.tokenId as string, r); // log order: the last wins
-      return out;
-    } finally { st.close(); }
-  }
 }
