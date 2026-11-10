@@ -9,8 +9,8 @@
 //!   (`check`) refuses, in order: no price (the record below), no token id, the token on the list (enabled, or
 //!   disabled by the admin: only the admin re-enables it), no deploy of the token in the BEEF, no payment named
 //!   or not in it (402), under the price (402), the payment already in the wallet (409). The handler checks the
-//!   output pays the BRC-29 key derived for the sender, hands the payment to the wallet (a loopback message to
-//!   the box `amm/pay`), and does what the admin's enable does, keeping `{paidBy, paymentTxid, satoshisPaid}`.
+//!   output pays the BRC-29 key derived for the sender, (PREPARED) ingests it at the chain app and files it with the
+//!   wallet app (main.zig), and does what the admin's enable does, keeping `{paidBy, paymentTxid, satoshisPaid}`.
 //! - (0.21.0: no withdraw — no collecting in this rebuild; HANDOFF-2026-11-09 WALLET + SIGNER "SCOPE".)
 const std = @import("std");
 const w = @import("chain");
@@ -24,7 +24,6 @@ const eql = std.mem.eql;
 pub const price_head = "amm/enable-price";
 pub const price_kind = "amm-enable-price";
 /// 0.15.3: the box the paid enable's payment goes to, from this instance itself (a loopback message), for the wallet.
-pub const pay_box = "amm/pay";
 
 fn map(a: Allocator, es: []const cbor.Entry) !Value {
     return .{ .map = try a.dupe(cbor.Entry, es) };

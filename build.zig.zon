@@ -10,6 +10,9 @@
             .url = "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.22.0.tar.gz",
             .hash = "skein_amm-0.22.0-IsSTBg5ulAA853JqrrnHSG74znp4q52uM5e2Hbqv9PGd",
         },
+        // PREPARED (rebuild-0.21-perms): the signer app's client (skein-sdk branch `signer-client`, local), for the paid
+        // listing's BRC-29 derivation through the signer app. A re-pin to the skein-sdk tag when it lands.
+        .skein_sdk_signer = .{ .path = "../wt-sdk-signer-client" },
     },
     .paths = .{
         "build.zig",

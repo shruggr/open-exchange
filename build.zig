@@ -24,6 +24,8 @@ const Mods = struct {
     overlay_sk: *std.Build.Module,
     /// The SDK's wallet library (0.15.2: BRC-29 and the signer's wire frames, for the paid enable's payee key check).
     wallet: *std.Build.Module,
+    /// PREPARED: the signer app's client (skein-sdk `signer-client`): requests to the signer app by a named call.
+    signer: *std.Build.Module,
 };
 
 fn mods(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) Mods {
@@ -50,6 +52,7 @@ fn mods(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.O
         .dagjson = sdk.module("dagjson"),
         .overlay_sk = ov.module("sk"),
         .wallet = sdk.module("wallet"),
+        .signer = b.dependency("skein_sdk_signer", .{ .target = target, .optimize = optimize }).module("signer"),
     };
 }
 
@@ -65,6 +68,7 @@ fn imports(b: *std.Build, m: Mods) []const std.Build.Module.Import {
         .{ .name = "dagjson", .module = m.dagjson },
         .{ .name = "overlay_sk", .module = m.overlay_sk },
         .{ .name = "wallet", .module = m.wallet },
+        .{ .name = "signer", .module = m.signer },
     }) catch @panic("OOM");
 }
 
