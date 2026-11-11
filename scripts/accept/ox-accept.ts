@@ -71,6 +71,8 @@ import { firstRun, main, settings, startExchange, type Env, type Running } from 
 import { changeBps, marketCandles, mergeStats, poolState } from "../../host/pools.ts";
 import { commissionPkhFor } from "../../host/relay.ts";
 import { instanceStats } from "../../host/folds/stats.ts";
+import { TokenFold } from "../../host/folds/fold.ts";
+import { record } from "../../host/events.ts";
 import { priceOf } from "@dcasegr/amm-engine";
 
 type Sdk = typeof import("@bsv/sdk");
@@ -600,6 +602,15 @@ try {
   const histAfterBuy = await getJson(`/@${B}/amm/pools/history?outpoint=${opOf("swap_bsv_in")}`) as { events?: Array<Record<string, unknown>> } | undefined;
   check(histAfterDeploy?.events?.map((e) => e.type).join() === "swap,swap,close" && histAfterDeploy.next === null && histAfterBuy?.events?.map((e) => e.type).join() === "swap,close" && (await get(`/@${B}/amm/pools/history?outpoint=${"ab".repeat(32)}_0`)).status === 404, `…?outpoint= starts strictly after that output (deploy → ${histAfterDeploy?.events?.map((e) => e.type).join()}; first swap → ${histAfterBuy?.events?.map((e) => e.type).join()}); an unknown outpoint is 404`);
 
+  // 0.22.0 (skein 0.8.0: events placed by an instance-wide step number, the kernel's order TRUE): the fold applied live
+  // equals a fold rebuilt from a read of the same events — the same hops, in the same places, the same pool states.
+  {
+    const live = await x.pools.folds.ensure(B);
+    const fresh = new TokenFold(B);
+    for (const d of await r.events.read(B, { name: "amm/hop" })) fresh.take(record(d), d.id);
+    const view = (f: TokenFold) => JSON.stringify({ hops: f.hops.map((h) => [h.place, h.kind, h.txid, h.poolId, h.swaps]), current: [...f.current.entries()].sort().map(([k, h]) => [k, h.place, h.outpoint ?? null]) });
+    check(view(live) === view(fresh) && live.hops.length > 0, `B's fold applied live equals the fold rebuilt from the index (${live.hops.length} hops; places ${live.hops.map((h) => h.place.split(".").slice(0, 2).join(".")).join(" ")})`);
+  }
   const tr = await fetch(`${R}/@${B}/amm/trades`);
   const trj = await tr.json().catch(() => ({})) as { trades?: Array<Record<string, unknown>>; next?: unknown };
   check(tr.status === 200 && tr.headers.get("cache-control") === "public, max-age=5" && trj.trades?.length === 2 && trj.trades[0]!.side === "sell" && trj.trades[1]!.side === "buy" && trj.next === null && trj.trades.every((t) => t.poolId === poolB), `GET /@<B>/amm/trades: two rows, newest first (${trj.trades?.map((t) => t.side).join(", ")}), each with the pool id, next null`);
@@ -1024,6 +1035,76 @@ try {
   await raceHost(3);
   await raceHost(2, true);
   await raceHost(5, false, true);
+
+  // ------------------------------------------------ 0.22.0: the live failure (a mined ancestor broadcast and recorded rejected) and proof over rejection
+  // Token Z's deploy dZ and its first transfer X1 are mined in ONE block: the enable feeds dZ with that block's path,
+  // which covers X1 too (skein-chain 0.11.0: a saved path links every transaction it covers). Then C (spends X1:0)
+  // comes with X1 RAW, no BUMP: X1 is `mined` at intake (its proof is the one the instance holds through dZ's path)
+  // and is NEVER broadcast; C is admitted; nothing hangs. Then R (spends C:0) is broadcast and the network rejects it:
+  // the door answers 400; R is mined; R submitted again WITH its proof → admitted (David: "Proof always overrides
+  // rejected").
+  {
+    const { Beef } = sdk as unknown as { Beef: typeof import("@bsv/sdk").Beef };
+    const dZ = deploy(0x5a, "ZZZ", 0);
+    const Z = `${dZ.id("hex")}_0`;
+    const zId = Buffer.from(dZ.id("hex"), "hex").reverse();
+    const hold = new P2PKH().lock(holder.toPublicKey().toHash());
+    const X1 = new Transaction();
+    X1.addInput({ sourceTransaction: dZ, sourceOutputIndex: 0, unlockingScriptTemplate: new P2PKH().unlock(holder) });
+    X1.addOutput({ lockingScript: valueScript(zId, 21_000_000, hold), satoshis: 1 });
+    await X1.sign();
+    // One block: [coinbase, dZ, X1] (the last leaf duplicated), every leaf in the one path.
+    const hZ = headers.length + 1;
+    const cbz = "7a".repeat(32);
+    const pathZ = new MerklePath(hZ, [[{ offset: 0, hash: cbz }, { offset: 1, hash: dZ.id("hex"), txid: true }, { offset: 2, hash: X1.id("hex"), txid: true }, { offset: 3, duplicate: true }]]);
+    headers.push(mine(sha256d(headers.at(-1)!), internal(pathZ.computeRoot(dZ.id("hex"))), 1_790_200_000 + hZ * 600));
+    dZ.merklePath = pathZ;
+    pushHeader();
+    await until("swap's chain at Z's block", async () => { const t = await (await r.hydrate(SWAP)).kernel.chainTip(); return t && t.height >= hZ ? t : undefined; });
+    await send({ fn: "enable", args: { tokenId: Z, beef: Uint8Array.from(dZ.toAtomicBEEF()) } });
+    const upZ = await until("/@Z/amm/token", async () => (await get(`/@${Z}/amm/token`)).status === 200 ? true : undefined, 60_000);
+    await x.exchange.idle();
+    keep(x, Z);
+    check(!!upZ, "Z enabled: its deploy fed with the block's path (covering X1 too)");
+    const tmZ = `tm_color_${Z}`;
+    const C = new Transaction();
+    C.addInput({ sourceTransaction: X1, sourceOutputIndex: 0, unlockingScriptTemplate: new P2PKH().unlock(holder) });
+    C.addOutput({ lockingScript: valueScript(zId, 21_000_000, hold), satoshis: 1 });
+    await C.sign();
+    const bundle = new Beef();
+    bundle.mergeTransaction(dZ);
+    bundle.mergeRawTx(X1.toBinary()); // X1 RAW: no BUMP
+    bundle.mergeRawTx(C.toBinary());
+    const postedBefore = arcade.posts.length;
+    const t0 = Date.now();
+    const subC = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmZ]) }, body: Uint8Array.from(bundle.toBinary()), signal: AbortSignal.timeout(60_000) }).catch((e: Error) => ({ status: 0, json: async () => ({ error: e.name }) }));
+    const steakC = await subC.json().catch(() => ({})) as Record<string, { outputsToAdmit?: number[] }>;
+    const x1Status = await getJson(`/@${Z}/events/chain/tx/${X1.id("hex")}?latest=1`) as Array<{ record?: { status?: string } }> | undefined;
+    const x1Posted = arcade.posts.slice(postedBefore).some((b) => FakeArcade.txOf(b).id("hex") === X1.id("hex"));
+    check(subC.status === 200 && (steakC[tmZ]?.outputsToAdmit ?? []).includes(0), `C (spending X1, sent RAW beside dZ's path) admitted through the door in ${Date.now() - t0} ms (${subC.status} ${JSON.stringify(steakC)})`);
+    check(x1Status?.[0]?.record?.status === "mined" && !x1Posted, `…X1 mined at intake (${JSON.stringify(x1Status?.[0]?.record?.status)}) and never broadcast (posted: ${x1Posted})`);
+    // R: broadcast, then the network's REJECTED; the door answers 400 from the instance's verdict for that submission.
+    const Rt = new Transaction();
+    Rt.addInput({ sourceTransaction: C, sourceOutputIndex: 0, unlockingScriptTemplate: new P2PKH().unlock(holder) });
+    Rt.addOutput({ lockingScript: valueScript(zId, 21_000_000, hold), satoshis: 1 });
+    await Rt.sign();
+    const rBeef = new Beef();
+    rBeef.mergeTransaction(dZ); rBeef.mergeRawTx(X1.toBinary()); rBeef.mergeRawTx(C.toBinary()); rBeef.mergeRawTx(Rt.toBinary());
+    const firstR = fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmZ]) }, body: Uint8Array.from(rBeef.toBinary()), signal: AbortSignal.timeout(60_000) }).then(async (q) => ({ status: q.status, body: await q.json().catch(() => ({})) as Record<string, unknown> }), (e: Error) => ({ status: 0, body: { error: e.name } as Record<string, unknown> }));
+    await until("R at the fake Arcade", () => arcade.txs.has(Rt.id("hex")) ? true : undefined, 30_000);
+    arcade.emit(Rt.id("hex"), { txStatus: "REJECTED" });
+    const r1 = await firstR;
+    check(r1.status === 400 && r1.body.code === "ERR_REJECTED", `R broadcast, then REJECTED by the network: the door answers 400 ${String(r1.body.code)}`);
+    // R mined, and submitted again with its proof: admitted.
+    const hR2 = mineAlone(Rt);
+    pushHeader();
+    await until("Z's chain at R's block", async () => { const t = await (await r.hydrate(Z)).kernel.chainTip(); return t && t.height >= hR2 ? t : undefined; });
+    const proved = new Beef();
+    proved.mergeTransaction(Rt);
+    const r2 = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmZ]) }, body: Uint8Array.from(proved.toBinary()), signal: AbortSignal.timeout(60_000) }).then(async (q) => ({ status: q.status, body: await q.json().catch(() => ({})) as Record<string, { outputsToAdmit?: number[] }> }), (e: Error) => ({ status: 0, body: { error: e.name } as never }));
+    const rNow = await getJson(`/@${Z}/events/chain/tx/${Rt.id("hex")}?latest=1`) as Array<{ record?: { status?: string } }> | undefined;
+    check(r2.status === 200 && (r2.body[tmZ]?.outputsToAdmit ?? []).includes(0) && rNow?.[0]?.record?.status === "mined", `R recorded rejected, then submitted with its proof: admitted (${r2.status} ${JSON.stringify(r2.body)}; chain/tx ${JSON.stringify(rNow?.[0]?.record?.status)})`);
+  }
 
   // ------------------------------------------------ disable, enable again
   await send({ fn: "disable", args: { tokenId: A } });
