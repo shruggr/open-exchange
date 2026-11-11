@@ -1,21 +1,21 @@
 .{
     .name = .open_exchange,
-    .version = "0.22.1",
+    .version = "0.23.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xf7e22713b189a87e,
     .dependencies = .{
         // The AMM library (shruggr/skein-amm): its deploy reader (src/deploy.zig) and fixtures, and
         // through it the overlay engine's SDK modules and the 1Color module the swap program links.
-        // The AMM library (shruggr/skein-amm v0.50.1):
+        // The AMM library (shruggr/skein-amm v0.51.0):
         // (src/deploy.zig) and fixtures, and through it the overlay engine's SDK modules and the 1Color module.
         .skein_amm = .{
-            .url = "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.50.1.tar.gz",
-            .hash = "skein_amm-0.50.1-IsSTBp19SgBcKD8_xY3GS6zDzu7z-UMxH8ldcMcunmsJ",
+            .url = "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.51.0.tar.gz",
+            .hash = "skein_amm-0.51.0-IsSTBn8fSgAVG4PIPSxNUkUcUJGAAWC14GQf1zHQvZwY",
         },
-        // skein-sdk v0.21.3: the signer app's client (lib/signer.zig) and the named call (`sk.callAs`).
+        // skein-sdk v0.22.0: the signer app's client (lib/signer.zig) and the named call (`sk.callAs`).
         .skein_sdk_signer = .{
-            .url = "https://github.com/shruggr/skein-sdk/archive/refs/tags/v0.21.3.tar.gz",
-            .hash = "skein_sdk-0.21.3-YroFBBBRHQC3zT-I3_JNl2D6p0eC7iFo_3qfKOzm4EC_",
+            .url = "https://github.com/shruggr/skein-sdk/archive/refs/tags/v0.22.0.tar.gz",
+            .hash = "skein_sdk-0.22.0-YroFBOtRHQDsUCK_sT7ueDaht1ID7aFRQoSzp-Fb7edh",
         },
     },
     .paths = .{

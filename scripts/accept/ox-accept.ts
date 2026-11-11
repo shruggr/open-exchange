@@ -1094,7 +1094,8 @@ try {
     const x1Posted = arcade.posts.slice(postedBefore).some((b) => FakeArcade.txOf(b).id("hex") === X1.id("hex"));
     check(subC.status === 200 && (steakC[tmZ]?.outputsToAdmit ?? []).includes(0), `C (spending X1, sent RAW beside dZ's path) admitted through the door in ${Date.now() - t0} ms (${subC.status} ${JSON.stringify(steakC)})`);
     check(x1Status?.[0]?.record?.status === "mined" && !x1Posted, `…X1 mined at intake (${JSON.stringify(x1Status?.[0]?.record?.status)}) and never broadcast (posted: ${x1Posted})`);
-    // R: broadcast, then the network's REJECTED; the door answers 400 from the instance's verdict for that submission.
+    // R: admitted at intake (0.23.0, one-step: the door answers its admission at once), broadcast, then the
+    // broadcaster's REJECTED reaches the instance: the chain app records it rejected and the overlay reverts it.
     const Rt = new Transaction();
     Rt.addInput({ sourceTransaction: C, sourceOutputIndex: 0, unlockingScriptTemplate: new P2PKH().unlock(holder) });
     Rt.addOutput({ lockingScript: valueScript(zId, 21_000_000, hold), satoshis: 1 });
@@ -1106,8 +1107,18 @@ try {
     arcade.mode = "reject";
     const firstR = fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmZ]) }, body: Uint8Array.from(rBeef.toBinary()), signal: AbortSignal.timeout(60_000) }).then(async (q) => ({ status: q.status, body: await q.json().catch(() => ({})) as Record<string, unknown> }), (e: Error) => ({ status: 0, body: { error: e.name } as Record<string, unknown> }));
     const r1 = await firstR;
+    const rPosted = await until("R at the broadcaster", async () => arcade.posts.some((b) => FakeArcade.txOf(b).id("hex") === Rt.id("hex")) ? true : undefined, 30_000);
     arcade.mode = "ok";
-    check(r1.status === 400 && r1.body.code === "ERR_REJECTED", `R broadcast and REJECTED by the network: the door answers ${r1.status} ${String(r1.body.code)} (${JSON.stringify(r1.body).slice(0, 160)})`);
+    const rAdmitted = r1.status === 200 && ((r1.body[tmZ] as { outputsToAdmit?: number[] } | undefined)?.outputsToAdmit ?? []).includes(0);
+    const rRejected = await until("R rejected at the chain app", async () => {
+      const e = await getJson(`/@${Z}/events/chain/tx/${Rt.id("hex")}?latest=1`) as Array<{ record?: { status?: string } }> | undefined;
+      return e?.[0]?.record?.status === "rejected" ? true : undefined;
+    }, 30_000);
+    const rVerdict = await until("R reverted by the overlay", async () => {
+      const e = await getJson(`/@${Z}/events/amm/topic/tx/${Rt.id("hex")}?latest=1`) as Array<{ record?: { verdict?: string } }> | undefined;
+      return e?.[0]?.record?.verdict === "reverted" ? "reverted" : undefined;
+    }, 30_000);
+    check(rAdmitted && rPosted === true && rRejected === true && rVerdict === "reverted", `R admitted at intake (the door answers ${r1.status} ${JSON.stringify(r1.body).slice(0, 160)}), broadcast (${rPosted === true}), the broadcaster's REJECTED recorded at the chain app (${rRejected === true}), the overlay's verdict ${JSON.stringify(rVerdict)}`);
     // R mined, and submitted again with its proof: admitted.
     const hR2 = mineAlone(Rt);
     pushHeader();
