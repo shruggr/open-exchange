@@ -1,6 +1,6 @@
 .{
     .name = .open_exchange,
-    .version = "0.21.0",
+    .version = "0.22.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xf7e22713b189a87e,
     .dependencies = .{
@@ -12,10 +12,10 @@
             .url = "https://github.com/shruggr/skein-amm/archive/bfdab2e441652fa3c3b3b021fb09c844bfb2db37.tar.gz",
             .hash = "skein_amm-0.49.0-IsSTBm2rSgClOHy9jrpZT4XpNzOv-td1G_Dk6I4ot076",
         },
-        // skein-sdk v0.20.0: the signer app's client (lib/signer.zig) and the named call (`sk.callAs`).
+        // skein-sdk v0.21.1: the signer app's client (lib/signer.zig) and the named call (`sk.callAs`).
         .skein_sdk_signer = .{
-            .url = "https://github.com/shruggr/skein-sdk/archive/refs/tags/v0.20.0.tar.gz",
-            .hash = "skein_sdk-0.20.0-YroFBGc4HACEuIOmCs1eYaSpsjCKtFwEsaPX9fvH7XnW",
+            .url = "https://github.com/shruggr/skein-sdk/archive/refs/tags/v0.21.1.tar.gz",
+            .hash = "skein_sdk-0.21.1-YroFBAI6HQCfh4yUorCkkq1_hDL_dIyggW7n-MMvRkCJ",
         },
     },
     .paths = .{
