@@ -44,7 +44,7 @@ export interface Hop {
   feeCommission: bigint;
   commissionPkh?: string;
   payoutPkh?: string;
-  /** The row's place in the instance's event index (`<n>.<seq>.<i>.<thread>`): `/pools/history`'s order and cursor. */
+  /** The row's place in the instance's event index (`<s>.<i>.<thread>`, skein 0.8.0): `/pools/history`'s order and cursor. */
   place: string;
   /** The record as the recognizer emitted it (what the pool feeds and `/pools/history` hand out). */
   row: Rec;
@@ -80,12 +80,17 @@ export function hopOf(rec: Rec, place = ""): Hop | undefined {
   };
 }
 
-/** Index places in log order: (n, seq, i) numerically, then the thread (the index's own tie order is the thread's bytes). */
+/**
+ * Index places in log order (skein 0.8.0: a place is `<s>.<i>.<thread>`, `s` the instance-wide step number, `i` the
+ * event's index in that step): `s`, then `i`, as NUMBERS; the thread never orders (equal `s` and `i` are one event).
+ */
 export function placeCmp(x: string, y: string): number {
   const a = x.split("."), b = y.split(".");
-  for (let k = 0; k < 3; k++) { const d = Number(a[k]) - Number(b[k]); if (d) return d; }
-  return (a[3] ?? "") < (b[3] ?? "") ? -1 : (a[3] ?? "") > (b[3] ?? "") ? 1 : 0;
+  return Number(a[0]) - Number(b[0]) || Number(a[1]) - Number(b[1]);
 }
+
+/** A place's text: `<s>.<i>.<thread>` (skein 0.8.0; a four-part id is an older index's, void). */
+export const PLACE = /^\d+\.\d+\.[a-z0-9]+$/;
 
 /** A swap's price from its amounts by side (a buy paid amountIn sats for amountOut tokens); undefined with no tokens. */
 export function priceOf(h: Hop): Price | undefined {

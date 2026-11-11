@@ -9,19 +9,25 @@
 //   request before forwarding it) with the BEEF as the body and X-Topics a JSON array of topics:
 //   1. every named topic must be one the instance serves (host.db `instances.topics`): else 400;
 //   2. T = the BEEF's subject (the Atomic BEEF's, else its last transaction);
-//   3. duplicate control: T's latest verdict `<app>/topic/tx/<T>` already admitted / rejected / reverted → answered from
-//      it at once, nothing handed over;
-//   4. else the BEEF handed to the instance as the ONE submit: the submit message to `<app>/submit`, signed as the
-//      instance (skein Router `submitAsSelf`, public since the call-permissions merge), the first topic
-//      named; a refusal at the instance's door → 400 with its reason, now;
-//   5. the connection held on `<app>/topic/tx/<T>`: admitted → 200 STEAK {<topic>: {outputsToAdmit, coinsToRetain}};
-//      rejected / reverted → 400; undecided → still held. THE CLIENT'S CONNECTION IS THE ONLY TIMER: when it closes the
-//      host stops waiting (nothing is undone: the submission is the instance's).
+//   3. answered at once, nothing handed over, ONLY when the submission cannot change anything: T's latest verdict
+//      `<app>/topic/tx/<T>` is `admitted` (the same STEAK, read from the facts again). 0.22.0 (David: "Proof always
+//      overrides rejected. Rejected is only a guess based on the information we've received. Proof is verifiable"):
+//      a recorded `rejected` / `reverted` / `undecided`, or none, is HANDED OVER — the submission may carry the proof;
+//      the door keeps nothing of its own, it reads the instance's facts;
+//   4. the BEEF handed to the instance as the ONE submit: the submit message to `<app>/submit`, signed as the
+//      instance (skein Router `submitAsSelf`), the first topic named; a refusal at the instance's door → 400 with its
+//      reason, now;
+//   5. the answer is the instance's verdict for THIS submission: the first decided `<app>/topic/tx/<T>` placed after
+//      it was handed over → admitted: 200 STEAK {<topic>: {outputsToAdmit, coinsToRetain}}; rejected / reverted: 400.
+//      When the instance judged it and placed no new verdict (it stands as it was: e.g. still rejected, no proof), the
+//      verdict then standing is the answer. Undecided (paused on parents) → held until it is decided. THE CLIENT'S
+//      CONNECTION IS THE ONLY TIMER: when it closes the host stops waiting (nothing is undone: the submission is the
+//      instance's).
 //   STEAK (INFERRED from the overlay's facts, not read from its state): outputsToAdmit = T's outputs whose latest
 //   `<app>/topic/output/<T>.<vout>` is `admitted`; coinsToRetain = T's inputs whose latest `<app>/topic/output/<op>` is
 //   `spent` by T (the topic's previous coins T consumed).
 import { Beef, Transaction } from "@bsv/sdk";
-import { followAll, latest, type Rec } from "./events.ts";
+import { followNew, latest, latestDelivered, type Rec } from "./events.ts";
 import { DISCOVERY } from "./exchange.ts";
 import type { Router } from "./skein.ts";
 
@@ -80,31 +86,35 @@ export class Door {
   }
 
   /**
-   * One submission through the door: T's verdict, waited for on `<app>/topic/tx/<T>` (an existing one answered at once).
-   * `signal` (the client's connection) ends the wait.
+   * One submission through the door: answered at once only for a recorded `admitted`; else handed over and answered
+   * from the instance's verdict for it (see the header, 3-5). `signal` (the client's connection) ends the wait.
    */
   async submit(handle: string, beef: Uint8Array, topic: string, signal?: AbortSignal): Promise<Verdict> {
     const app = overlayApp(handle);
     if (!app) throw new Error(`${handle}: no overlay app here`);
     const { txid, tx } = subjectOf(beef);
     const name = `${app}/topic/tx/${txid}`;
-    const decided = (rec: Rec | undefined) => rec && (rec.verdict === "admitted" || rec.verdict === "rejected" || rec.verdict === "reverted");
-    const now = await latest(this.r, handle, name).catch(() => undefined);
-    if (decided(now)) return await this.answer(handle, app, topic, txid, tx, now!);
+    const decided = (rec: Rec | undefined) => !!rec && (rec.verdict === "admitted" || rec.verdict === "rejected" || rec.verdict === "reverted");
+    const before = await latestDelivered(this.r, handle, name).catch(() => undefined);
+    if (before?.rec.verdict === "admitted") return await this.answer(handle, app, topic, txid, tx, before.rec);
     return await new Promise<Verdict>((resolve) => {
       let done = false, stop: (() => void) | undefined;
       const finish = (v: Verdict) => { if (done) return; done = true; stop?.(); signal?.removeEventListener("abort", onAbort); resolve(v); };
       const onAbort = () => finish({ verdict: "gone" });
       signal?.addEventListener("abort", onAbort);
+      const decide = (rec: Rec) => this.answer(handle, app, topic, txid, tx, rec).then(finish, (e: Error) => finish({ verdict: "refused", status: 500, reason: `the STEAK: ${e.message}` }));
       void (async () => {
         try {
-          stop = await followAll(this.r, handle, { name }, (_n, rec) => {
-            if (decided(rec)) this.answer(handle, app, topic, txid, tx, rec).then(finish, (e: Error) => finish({ verdict: "refused", status: 500, reason: `the STEAK: ${e.message}` }));
-          }, () => finish({ verdict: "gone" }));
+          // Only verdicts placed from now on: the one this submission brings.
+          stop = await followNew(this.r, handle, { name }, (_n, rec) => { if (decided(rec)) void decide(rec); }, () => finish({ verdict: "gone" }));
           if (done) { stop(); return; }
           const a = await this.r.submitAsSelf(handle, app, beef, topic);
-          if (a.verdict === "reject") finish({ verdict: "refused", status: 400, reason: a.reason ?? "turned away at the door" });
-          else if (a.verdict === "ignore") finish({ verdict: "refused", status: 503, reason: a.reason ?? "not taken" });
+          if (a.verdict === "reject") return finish({ verdict: "refused", status: 400, reason: a.reason ?? "turned away at the door" });
+          if (a.verdict === "ignore") return finish({ verdict: "refused", status: 503, reason: a.reason ?? "not taken" });
+          // The submission's entry is processed and committed (submitAsSelf returns after it): no new verdict placed →
+          // the instance left T as it stood; a decided one then standing is the answer, else (undecided) still held.
+          const after = await latestDelivered(this.r, handle, name).catch(() => undefined);
+          if (!done && after && after.place === before?.place && decided(after.rec)) void decide(after.rec);
         } catch (e) { finish({ verdict: "refused", status: 503, reason: (e as Error).message }); }
       })();
     });

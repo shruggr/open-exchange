@@ -4,12 +4,11 @@
 // `outpoint=` a wallet's pool output: its pool, strictly after the place of its latest `amm/output/<op>` row (the caller
 // reads it: `start`). Each row the hop's record as emitted.
 import type { TokenFold } from "./fold.ts";
-import { placeCmp } from "./hop.ts";
+import { PLACE, placeCmp } from "./hop.ts";
 import { BadQuery } from "./trades.ts";
 import type { Rec } from "../events.ts";
 
 export const MAX_EVENTS = 500;
-const PLACE = /^\d+\.\d+\.\d+\.[a-z0-9]+$/;
 
 export class NotFound extends Error {}
 
@@ -22,7 +21,7 @@ export function poolHistory(f: TokenFold, q: URLSearchParams, start?: { poolId: 
   let pool = q.get("pool");
   if (pool !== null && !/^[0-9a-f]{64}_\d+$/.test(pool)) throw new BadQuery("pool: <txid>_<vout>");
   let after = q.get("after");
-  if (after !== null && !PLACE.test(after)) throw new BadQuery("after: an event place <n>.<seq>.<i>.<thread>");
+  if (after !== null && !PLACE.test(after)) throw new BadQuery("after: an event place <s>.<i>.<thread> (skein 0.8.0)");
   if (q.get("outpoint") !== null) {
     if (!start) throw new NotFound("no pool output at this outpoint");
     pool = start.poolId;
