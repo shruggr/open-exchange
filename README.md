@@ -229,9 +229,9 @@ when its version differs, installed in place the same way. (0.21.0: no reindex �
 
 | image | installs |
 |---|---|
-| `swap` | skein-chain v0.12.0 (tarball), skein-signer v0.1.1 and skein-wallet v0.1.1 (tarballs), `../../apps/swap` (pages: skein-amm v0.52.0's web/ui); root's route `/` → the pages; created owned by the host's key. Approvals at birth from the manifests: swap `calls {signer: "*", wallet: ["bsv"]}`, the signer app's service `signer` |
-| `token` | skein-chain v0.12.0, the signer app, the wallet app (as above), skein-amm v0.52.0 (tarball: the recognizers, `calls {signer: ["1/amm pool", "2/skein instance/self", "2/metanet handles envelope/anyone"], wallet: ["bsv", "tokens"]}`); root's `/submit`, `/lookup` |
-| `discovery` | skein-chain v0.12.0, skein-1color v0.20.0 (tarballs); root's `/submit`, `/lookup` |
+| `swap` | skein-chain v0.12.1 (tarball), skein-signer v0.1.1 and skein-wallet v0.1.1 (tarballs), `../../apps/swap` (pages: skein-amm v0.52.0's web/ui); root's route `/` → the pages; created owned by the host's key. Approvals at birth from the manifests: swap `calls {signer: "*", wallet: ["bsv"]}`, the signer app's service `signer` |
+| `token` | skein-chain v0.12.1, the signer app, the wallet app (as above), skein-amm v0.52.1 (tarball: the recognizers, `calls {signer: ["1/amm pool", "2/skein instance/self", "2/metanet handles envelope/anyone"], wallet: ["bsv", "tokens"]}`); root's `/submit`, `/lookup` |
+| `discovery` | skein-chain v0.12.1, skein-1color v0.20.1 (tarballs); root's `/submit`, `/lookup` |
 
 ## Build and test
 
