@@ -15,6 +15,7 @@
 //                                                            {ok: false, reason, detail?, pool?, beef?}
 //           200 the host's own:  {ok: false, reason: "commission_missing", detail}   the one rule it checks (nothing relayed)
 //                                {ok: false, reason: "unreachable", detail}          any break in the call, named
+//                                {ok: false, reason: "rejected", detail}             0.23.0: Arcade refused the signed swap as invalid
 //           400 / 404 / 503 {status: "error", code, description}   a body that is not the shape, no such token here,
 //                                the commission key not to be had (nothing relayed)
 //
@@ -33,20 +34,26 @@
 //   3. carried: to a peer, P2PHost.call on /amm-validator/1/swap (one stream: one request frame, one answer frame);
 //      when peerId is this host's own node, handed in as that node's inbound frame (Router.p2pInbound), as any other
 //      peer's frame would be.
-//   4. a reply carrying `beef` (an accepted swap's, a pool_spent refusal's newest state) from ANOTHER node: submitted
-//      to the token instance's overlay through the host's door (0.21.0, door.ts: the submit message as the instance,
-//      its verdict `amm/topic/tx/<T>` awaited) before the page is answered, so the page's next pools read reflects it. (The local validator's submission is this
-//      overlay's already.)
-//   5. the page answered.
+//   4. a reply carrying `beef` (an accepted swap's, a pool_spent refusal's newest state) from ANOTHER node: taken into
+//      the token instance (the host's one submit path, skein Router `submitAsSelf`: the submit message as the
+//      instance), so this host's instance holds it and broadcasts it ("every host that receives an unmined
+//      transaction broadcasts it"). (The local validator's submission is this instance's already.)
+//   5. the page answered. 0.23.0 (David 2026-11-11, rule 10: "The requester should be queued off of the actual
+//      broadcast state"): a reply carrying a signed transaction (`tx`, an accepted swap) is answered when THIS host's
+//      broadcast of it is taken by Arcade (skein Router `broadcastTaken`, held from before step 4); refused by Arcade
+//      as invalid, the page gets `{ok: false, reason: "rejected", detail: <Arcade's reason>}`. On the validator's own
+//      host the frame's answer was held the same way already (skein `p2pInbound`), so a local reply is answered as it
+//      is. A reply with no transaction (a refusal) is answered at once, after its BEEF is taken in.
 //
 // THE PAGE'S CONNECTION IS THE ONLY TIMER: the attempt lives exactly as long as the page's request. When the request
 // closes, `signal` fires and the host stops — a dial in progress cancelled, a request not yet written never written,
 // an open stream closed. Once written it is delivered: the validator answers on its stream; a signed swap lands on the
 // overlay and the page's settle pass finds it. No retries, no re-offer, no host timers, nothing resumes after a restart.
+// The hold on this host's broadcast (step 5) is in memory, keyed by txid, and ends with the page's request too.
 import { Beef, Hash, KeyDeriver, PrivateKey, Transaction, Utils } from "@bsv/sdk";
 import { PARAM_ASSET_ID, PARAM_COMMISSION_BPS, PARAM_LP_FEE_BPS, PARAM_VALIDATOR_FEE_BPS, POOL_SLOTS, POOL_TEMPLATE_HEX } from "./pool-code.ts";
 import type { Router, Skein } from "./skein.ts";
-import type { Door } from "./door.ts";
+import { overlayApp } from "./door.ts";
 
 type RouterRequest = import("@dcasegr/skein/dist/host/router.js").RouterRequest;
 type RouterResponse = import("@dcasegr/skein/dist/host/router.js").RouterResponse;
@@ -290,13 +297,17 @@ export function nonceOf(swapRaw: number[]): Uint8Array {
 
 // ---------------------------------------------------------------- the route
 
+/** The txid of the signed transaction a validator's reply carries (`tx`: an accepted swap), else undefined (a refusal). */
+export function signedTxid(reply: Rec): string | undefined {
+  if (!(reply.tx instanceof Uint8Array) || !reply.tx.length) return undefined;
+  try { return Transaction.fromBinary(Array.from(reply.tx)).id("hex"); } catch { return undefined; }
+}
+
 /** What the relay needs of the host (skein 0.3.1's Router and P2PHost; tests' fakes). */
 export interface RelayHost {
   router: Router;
   sk: Skein;
   log(line: string): void;
-  /** 0.21.0: the host's /submit door (door.ts): the validator's BEEF goes in through it and its verdict is awaited. */
-  door?: Door;
 }
 
 export class Relay {
@@ -364,10 +375,24 @@ export class Relay {
       return answer(200, { ok: false, reason: "unreachable", detail: k?.kind === "error" && typeof k.message === "string" ? `the validator's host: ${k.message}` : "the validator's answer has no ok" });
     }
 
-    // 4. Its BEEF into this overlay first (another node's state), so the page's next read reflects it.
-    if (!local && reply.beef instanceof Uint8Array && reply.beef.length) await this.submit(tokenId, reply.beef, signal);
+    // 4. Its BEEF into this instance (another node's state): this host broadcasts what it takes in. A signed
+    //    transaction's hold on that broadcast is registered first (no status between is missed).
+    const txid = signedTxid(reply);
+    let held: ReturnType<Router["broadcastTaken"]> | undefined;
+    if (!local && reply.beef instanceof Uint8Array && reply.beef.length) {
+      if (txid) held = this.r.broadcastTaken(tokenId, txid, signal);
+      await this.takeIn(tokenId, reply.beef);
+    }
+    // 5. The page answered: a signed swap once this host's broadcast of it is taken by Arcade (or refused as invalid).
+    if (held) {
+      const t = await held;
+      if ("gone" in t) return answer(200, { ok: false, reason: "unreachable", detail: "the request closed before this host's broadcast was taken" });
+      if (!t.taken) {
+        this.o.log(`${tokenId}: swap on ${pool} via ${peerId}: ${txid!.slice(0, 8)}… refused by Arcade (${t.reason})`);
+        return answer(200, { ok: false, reason: "rejected", detail: t.reason });
+      }
+    }
     this.o.log(`${tokenId}: swap on ${pool} via ${local ? "this node's validator" : peerId}: ${reply.ok ? `accepted ${String(reply.txid).slice(0, 8)}…` : `refused ${String(reply.reason)}`}`);
-    // 5. The validator's reply as it is.
     return answer(200, reply);
   }
 
@@ -391,20 +416,13 @@ export class Relay {
   }
 
   /**
-   * The validator's BEEF to the token instance's overlay (0.21.0: through the host's door — the submit message as the
-   * instance, the verdict `amm/topic/tx/<T>` awaited, the page's connection the only timer; HANDOFF-2026-11-09 "A host
-   * that CALLS submit itself … waits on `<app>/topic/tx/<T>`"). Without a door: the instance's POST /submit, as before.
+   * The validator's BEEF into the token instance: the host's one submit path (skein Router `submitAsSelf`: the submit
+   * message, signed as the instance, to its overlay). A refusal at its door is logged; nothing is awaited beyond the
+   * front door's verdict on the entry.
    */
-  private async submit(tokenId: string, beef: Uint8Array, signal?: AbortSignal): Promise<void> {
-    if (this.o.door) {
-      const v = await this.o.door.submit(tokenId, beef, `tm_color_${tokenId}`, signal).catch((e: Error) => ({ verdict: "refused", status: 0, reason: e.message }) as const);
-      if (v.verdict !== "admitted") this.o.log(`${tokenId}: the validator's BEEF into this overlay: ${v.verdict}${"reason" in v ? `: ${v.reason}` : ""}`);
-      return;
-    }
-    const r = await this.r.dispatch({
-      method: "POST", url: `${this.r.origin()}/@${tokenId}/submit`,
-      headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([`tm_color_${tokenId}`]) }, body: beef,
-    }).catch((e: Error) => ({ status: 0, body: enc(e.message) }) as RouterResponse);
-    if (r.status !== 200) this.o.log(`${tokenId}: the validator's BEEF into this overlay: ${r.status} ${new TextDecoder().decode(r.body).slice(0, 200)}`);
+  private async takeIn(tokenId: string, beef: Uint8Array): Promise<void> {
+    const app = overlayApp(tokenId) ?? "amm";
+    const a = await this.r.submitAsSelf(tokenId, app, beef, `tm_color_${tokenId}`).catch((e: Error) => ({ verdict: "ignore", reason: e.message }) as const);
+    if (a.verdict !== "accept") this.o.log(`${tokenId}: the validator's BEEF into this instance: ${a.verdict}${a.reason ? `: ${a.reason}` : ""}`);
   }
 }

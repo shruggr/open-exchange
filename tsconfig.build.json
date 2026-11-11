@@ -9,5 +9,8 @@
   "include": [
     "host",
     "scripts"
+  ],
+  "exclude": [
+    "**/*.test.ts"
   ]
 }

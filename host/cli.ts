@@ -97,7 +97,7 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   const log = (l: string) => env.out(`[open-exchange] ${l}`);
   pools = new Pools(host.router, log, sk.cid.decode);
   door = new Door(host.router, log);
-  relay = new Relay({ router: host.router, sk, log, door });
+  relay = new Relay({ router: host.router, sk, log });
   const pl = pools;
   ex = new Exchange({ sk, router: host.router, hostKey: key.identity, hostWallet: key.wallet, log, ...(o.swapAppDir ? { swapAppDir: o.swapAppDir } : {}), ...(o.imagesDir ? { imagesDir: o.imagesDir } : {}) });
   // 0.21.0: swap's facts followed from its event index from now (amm/token/…, amm/token-terms/…, amm/discovery,
