@@ -11,4 +11,7 @@ process.env.SKEIN_HOME ||= join(homedir(), ".skein");
 const root = new URL("..", import.meta.url);
 const built = new URL("dist/host/cli.js", root);
 const { main } = await import(existsSync(built) ? built.href : new URL("host/cli.ts", root).href);
-process.exitCode = await main(process.argv.slice(2), { vars: process.env, out: (l) => process.stdout.write(`${l}\n`), err: (l) => process.stderr.write(`${l}\n`) });
+// 0.23.1: `run` (the default command) stamps every line it writes (skein 0.9.1's stampLines: an ISO UTC prefix).
+const { lineWriter } = await import("@dcasegr/skein/dist/host/stamp.js");
+const line = lineWriter((process.argv[2] ?? "run") === "run");
+process.exitCode = await main(process.argv.slice(2), { vars: process.env, out: (l) => process.stdout.write(`${line(l)}\n`), err: (l) => process.stderr.write(`${line(l)}\n`) });

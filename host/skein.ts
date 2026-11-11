@@ -36,6 +36,7 @@ export function skeinVersion(): string {
 }
 
 export type Cli = typeof import("@dcasegr/skein/dist/host/cli.js");
+export type StampMod = typeof import("@dcasegr/skein/dist/host/stamp.js");
 export type RouterMod = typeof import("@dcasegr/skein/dist/host/router.js");
 export type Router = import("@dcasegr/skein/dist/host/router.js").Router;
 export type HostDb = import("@dcasegr/skein/dist/host/instances.js").HostDb;

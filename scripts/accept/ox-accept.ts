@@ -246,7 +246,8 @@ async function zeroConfig(): Promise<void> {
   if (busy) { check(false, "zero config: port 8100 (the default) is taken on this box: stop what holds it, or OX_ACCEPT_ZERO=off"); return; }
   const out: string[] = [];
   const child = spawn(process.execPath, [bin], { env: { HOME: process.env.HOME, PATH: process.env.PATH, SKEIN_HOME: zhome }, stdio: ["ignore", "pipe", "pipe"] });
-  const take = (tag: string) => (b: Buffer) => { for (const l of b.toString("utf8").split("\n").filter(Boolean)) { out.push(`${tag}${l}`); if (process.env.VERBOSE) process.stdout.write(`  z ${tag}${l}\n`); } };
+  // 0.23.1: the bin's `run` stamps every line (an ISO UTC prefix): matched after it.
+  const take = (tag: string) => (b: Buffer) => { for (const l of b.toString("utf8").split("\n").filter(Boolean).map((x) => x.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z /, ""))) { out.push(`${tag}${l}`); if (process.env.VERBOSE) process.stdout.write(`  z ${tag}${l}\n`); } };
   child.stdout.on("data", take(""));
   child.stderr.on("data", take("ERR "));
   let exited: number | null | undefined;
