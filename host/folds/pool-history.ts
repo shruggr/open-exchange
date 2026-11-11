@@ -2,7 +2,9 @@
 // in the instance's event order, `from ≤ at < to`, one pool or every pool; forward paging with `after` = an event place
 // (the rows strictly after it), `limit` ≤ 500, `next` the last row's place when more rows remain, else null;
 // `outpoint=` a wallet's pool output: its pool, strictly after the place of its latest `amm/output/<op>` row (the caller
-// reads it: `start`). Each row the hop's record as emitted.
+// reads it: `start`). Each row the hop's record as emitted. 0.24.0: `from`/`to` judge a hop's EFFECTIVE time (fold.ts
+// `effectiveAt`, the greatest `at` up to it in its pool's history; `at` itself where it rises), as `/pools/at` does,
+// so `?pool&to=t` is exactly the prefix `/pools/at?t=<t-1>` stands on; the rows stay in place order.
 import type { TokenFold } from "./fold.ts";
 import { PLACE, placeCmp } from "./hop.ts";
 import { BadQuery } from "./trades.ts";
@@ -27,7 +29,8 @@ export function poolHistory(f: TokenFold, q: URLSearchParams, start?: { poolId: 
     pool = start.poolId;
     after = start.place;
   }
-  const rows = f.hops.filter((h) => (pool === null || h.poolId === pool) && (from === undefined || h.at >= from) && (to === undefined || h.at < to) && (after === null || placeCmp(after, h.place) < 0))
+  const eff = f.effectiveAt();
+  const rows = f.hops.filter((h) => (pool === null || h.poolId === pool) && (from === undefined || eff.get(h)! >= from) && (to === undefined || eff.get(h)! < to) && (after === null || placeCmp(after, h.place) < 0))
     .sort((x, y) => placeCmp(x.place, y.place));
   const page = rows.slice(0, limit);
   return { events: page.map((h) => h.row), next: rows.length > limit ? page[page.length - 1]!.place : null };

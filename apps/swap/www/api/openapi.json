@@ -1209,7 +1209,7 @@
       "post": {
         "operationId": "S1",
         "summary": "Relay a swap leg to its validator (the host is the relay)",
-        "description": "The open-exchange host relays one swap leg (0.17.0, skein-amm 0.44.0: the instance logs facts, never attempts; nothing about the attempt is recorded). Plain (no BRC-104 session, as /submit). The host checks ONE rule, the exchange's commission: when the pool's CommissionBps > 0 the Swap call's commissionPkh must be hash160 of the token instance's key for [1, \"amm commission\"], key id the pool outpoint the swap spends (`<txid>_<vout>` of the swap's input 0: a fresh key per swap, 0.21.0), counterparty anyone (derivable from the market's `identityKey` on /pools); a swap that fails it is answered `commission_missing` and nothing is relayed. Everything else is the validator's. The host signs the validator's package with the token instance's key, carries it on one libp2p stream (one request frame, one answer frame) to `peerId` — or, when `peerId` is this host's own node, hands it in as that node's inbound frame — submits a `beef` the reply carries to the token instance's overlay (another node's) and answers the validator's reply as it is. Any break in the call (dial refused, protocol not served, write failed, stream closed without an answer) is answered `unreachable` at once. The client's request is the only timer: when it closes the host stops (a dial in progress cancelled, a request not yet written never written, an open stream closed); once written, the validator answers on its stream and a signed swap reaches the overlay regardless. No retries, no record, no status read. THE BEEF RULE (0.18.0, skein 0.3.3 / skein-amm 0.45.0): a transaction the token's topic admitted (the pool output's transaction, a swap whose change or payout the taker spends) goes by txid alone (a BEEF V2 txid-only entry) — the validator's instance holds it, and skein 0.3.3's door admits a txid-only entry for a transaction the instance holds; every other transaction (the taker's own funding) raw with its ancestry back to proven (its BUMPs). A request the door would refuse (0.18.2, skein-amm 0.46.2) — a txid-only entry the validator's instance does not hold, a source neither in the BEEF nor held, a script that fails — is refused by the validator before its pool lock and its signature: `{ok: false, reason: \"bad_transaction\", detail: \"<the verifier's error>: <its meaning> (<txid or input>)\"}`, e.g. `UnknownTxidOnly: … (<txid>)`; nothing signed, nothing recorded, the pool not held.",
+        "description": "The open-exchange host relays one swap leg (0.17.0, skein-amm 0.44.0: the instance logs facts, never attempts; nothing about the attempt is recorded). Plain (no BRC-104 session, as /submit). The host checks ONE rule, the exchange's commission: when the pool's CommissionBps > 0 the Swap call's commissionPkh must be hash160 of the token instance's key for [1, \"amm commission\"], key id the pool outpoint the swap spends (`<txid>_<vout>` of the swap's input 0: a fresh key per swap, 0.21.0), counterparty anyone (derivable from the market's `identityKey` on /pools); a swap that fails it is answered `commission_missing` and nothing is relayed. Everything else is the validator's. The host signs the validator's package with the token instance's key, carries it on one libp2p stream (one request frame, one answer frame) to `peerId` — or, when `peerId` is this host's own node, hands it in as that node's inbound frame — submits a `beef` the reply carries to the token instance's overlay (another node's) and answers the validator's reply as it is. 0.23.0: a reply carrying the signed swap (`tx`) is answered only once THIS host's broadcast of that transaction is taken by Arcade (on the validator's own host, skein holds the frame's answer the same way); if Arcade refuses it as invalid the answer is `{ok: false, reason: \"rejected\", detail: <Arcade's reason>}`. A refusal (no `tx`) is answered at once. Any break in the call (dial refused, protocol not served, write failed, stream closed without an answer) is answered `unreachable` at once. The client's request is the only timer: when it closes the host stops (a dial in progress cancelled, a request not yet written never written, an open stream closed); once written, the validator answers on its stream and a signed swap reaches the overlay regardless. No retries, no record, no status read. THE BEEF RULE (0.18.0, skein 0.3.3 / skein-amm 0.45.0): a transaction the token's topic admitted (the pool output's transaction, a swap whose change or payout the taker spends) goes by txid alone (a BEEF V2 txid-only entry) — the validator's instance holds it, and skein 0.3.3's door admits a txid-only entry for a transaction the instance holds; every other transaction (the taker's own funding) raw with its ancestry back to proven (its BUMPs). A request the door would refuse (0.18.2, skein-amm 0.46.2) — a txid-only entry the validator's instance does not hold, a source neither in the BEEF nor held, a script that fails — is refused by the validator before its pool lock and its signature: `{ok: false, reason: \"bad_transaction\", detail: \"<the verifier's error>: <its meaning> (<txid or input>)\"}`, e.g. `UnknownTxidOnly: … (<txid>)`; nothing signed, nothing recorded, the pool not held.",
         "tags": [
           "host",
           "swaps"
@@ -1237,7 +1237,7 @@
         },
         "responses": {
           "200": {
-            "description": "The validator's reply as it is, or the host's own refusal (`commission_missing`) or break (`unreachable`)",
+            "description": "The validator's reply as it is (a signed swap once this host's broadcast of it is taken by Arcade), or the host's own refusal (`commission_missing`), break (`unreachable`) or Arcade's refusal (`rejected`, 0.23.0)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3310,7 +3310,8 @@
             "type": "integer"
           },
           "at": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The hop's time. 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
           },
           "height": {
             "type": [
@@ -3618,7 +3619,7 @@
           },
           "at": {
             "type": "integer",
-            "description": "That event's time (ms)."
+            "description": "That event's time (ms). 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
           },
           "swaps": {
             "type": "integer"

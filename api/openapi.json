@@ -3310,7 +3310,8 @@
             "type": "integer"
           },
           "at": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The hop's time. 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
           },
           "height": {
             "type": [
@@ -3618,7 +3619,7 @@
           },
           "at": {
             "type": "integer",
-            "description": "That event's time (ms)."
+            "description": "That event's time (ms). 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
           },
           "swaps": {
             "type": "integer"

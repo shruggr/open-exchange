@@ -3,7 +3,7 @@
 // amountIn, amountOut, feeLp, feeValidator, feeCommission, bsvReserve, tokenReserve, payoutPkh, at, height (the
 // block height its `chain/tx/<txid>` names when mined, else null — `heightOf`).
 import type { TokenFold } from "./fold.ts";
-import type { Hop } from "./hop.ts";
+import { PLACE, placeCmp, type Hop } from "./hop.ts";
 import type { Rec } from "../events.ts";
 
 export const MAX_TRADES = 500;
@@ -12,12 +12,12 @@ export const DEFAULT_TRADES = 100;
 
 export class BadQuery extends Error {}
 
-/** A cursor: hex of `<at>:<txid>` (opaque to a client). */
-const cursorOf = (h: Hop) => Buffer.from(`${h.at}:${h.txid}`).toString("hex");
-function parseCursor(t: string): { at: number; txid: string } {
-  const m = /^(\d+):([0-9a-f]{64})$/.exec(Buffer.from(t, "hex").toString());
-  if (!/^[0-9a-f]+$/.test(t) || !m) throw new BadQuery("before: not a cursor of this read");
-  return { at: Number(m[1]), txid: m[2]! };
+/** A cursor: hex of `<at>:<place>` (opaque to a client; 0.24.0: the place, the `swaps()` tie-break, not the txid). */
+const cursorOf = (h: Hop) => Buffer.from(`${h.at}:${h.place}`).toString("hex");
+function parseCursor(t: string): { at: number; place: string } {
+  const m = /^(\d+):(.+)$/.exec(Buffer.from(t, "hex").toString());
+  if (!/^[0-9a-f]+$/.test(t) || !m || !PLACE.test(m[2]!)) throw new BadQuery("before: not a cursor of this read");
+  return { at: Number(m[1]), place: m[2]! };
 }
 
 export function tradeRow(h: Hop, height: number | null): Rec {
@@ -40,6 +40,6 @@ export async function trades(f: TokenFold, q: URLSearchParams, heightOf: HeightO
   const before = q.get("before") ? parseCursor(q.get("before")!) : undefined;
   const rows = f.swaps().filter((h) =>
     (from === undefined || h.at >= from) && (to === undefined || h.at < to) && (pool === null || h.poolId === pool) &&
-    (!before || h.at < before.at || (h.at === before.at && h.txid < before.txid))).reverse().slice(0, limit);
+    (!before || h.at < before.at || (h.at === before.at && placeCmp(h.place, before.place) < 0))).reverse().slice(0, limit);
   return { trades: await Promise.all(rows.map(async (h) => tradeRow(h, await heightOf(h.txid)))), next: rows.length === limit ? cursorOf(rows[rows.length - 1]!) : null };
 }

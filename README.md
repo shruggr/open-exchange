@@ -30,7 +30,7 @@ The read API's routes, plain GETs, and the pool event feeds (0.14.0: every pool 
 | `/@<token>/amm/pools` | the token's live pools (each with `poolId`, `lpPubKey`, `swaps`, and 0.19.0 `lifetime`: the pool's counters — volume in and out each side, the fees to the LP, validator and commission in each asset, the last trade's time), its market, the validators beating (each with `minLegSats` when its beat's terms carry one); a plain read only |
 | `/@<token>/amm/pools/at?t=` | every pool listed at a time, as it stood then |
 | `/@<token>/amm/pools/history` (`?from&to&pool&limit&after`) | the raw pool history (deploy, swap, close, rescind), oldest first, paged forward by `next` |
-| `/@<token>/amm/trades` (`?from&to&limit&before&pool`, or `?txid=`) | the token's trade rows, newest first (each with `poolId` and `payoutPkh`) |
+| `/@<token>/amm/trades` (`?from&to&limit&before&pool`, or `?txid=`) | the token's trade rows, newest first (each with `poolId` and `payoutPkh`); 0.24.0 (skein-amm 0.52.0): a hop's `at` is its block's time when it was recorded already mined, else the step's, never changed afterwards — rows with equal `at` keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history |
 | `/@<token>/amm/candles?tf&from&to` (`&series=fill` or `market`) | `fill` (default): one candle per non-empty bucket of trades (the instance's); `market` (the host's): the market price after each pool event, one candle per bucket holding an event |
 | `/@<token>/amm/stats` | the host's (0.19.0: with the instance's lifetime `volumeSats`, `volumeTokens`, `trades`; 0.20.0: the instance's row is the last fill, the volumes and the counts only, the rest the host's, the fields as before): `price` = the planner's `priceOf` over the pools `/@<token>/amm/pools` lists (the midpoint of what a buy and a sell of 1% of the pooled sats would pay now), `buyPrice`, `sellPrice`; `change1h` / `change24h` from the same price over the pools listed then (`/pools/at`); `lastTradePrice`, 24 h volume and counts, last trade; TVL and pools over the listed pools |
 | `/@<token>/amm/color/<token>/holders` (`?limit&skip`) | the holder count and the balances, largest first; 0.19.0 (skein-1color 0.17.0): `supply`, `authorities`, `burned`, `burns` beside them |
@@ -229,8 +229,8 @@ when its version differs, installed in place the same way. (0.21.0: no reindex �
 
 | image | installs |
 |---|---|
-| `swap` | skein-chain v0.12.0 (tarball), skein-signer v0.1.1 and skein-wallet v0.1.1 (tarballs), `../../apps/swap` (pages: skein-amm v0.50.0's web/ui); root's route `/` → the pages; created owned by the host's key. Approvals at birth from the manifests: swap `calls {signer: "*", wallet: ["bsv"]}`, the signer app's service `signer` |
-| `token` | skein-chain v0.12.0, the signer app, the wallet app (as above), skein-amm v0.51.0 (tarball: the recognizers, `calls {signer: ["1/amm pool", "2/skein instance/self", "2/metanet handles envelope/anyone"], wallet: ["bsv", "tokens"]}`); root's `/submit`, `/lookup` |
+| `swap` | skein-chain v0.12.0 (tarball), skein-signer v0.1.1 and skein-wallet v0.1.1 (tarballs), `../../apps/swap` (pages: skein-amm v0.52.0's web/ui); root's route `/` → the pages; created owned by the host's key. Approvals at birth from the manifests: swap `calls {signer: "*", wallet: ["bsv"]}`, the signer app's service `signer` |
+| `token` | skein-chain v0.12.0, the signer app, the wallet app (as above), skein-amm v0.52.0 (tarball: the recognizers, `calls {signer: ["1/amm pool", "2/skein instance/self", "2/metanet handles envelope/anyone"], wallet: ["bsv", "tokens"]}`); root's `/submit`, `/lookup` |
 | `discovery` | skein-chain v0.12.0, skein-1color v0.20.0 (tarballs); root's `/submit`, `/lookup` |
 
 ## Build and test

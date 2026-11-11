@@ -58,7 +58,7 @@ import { instanceStats } from "./folds/stats.ts";
 import { poolsAt } from "./folds/pools-at.ts";
 import { NotFound, poolHistory } from "./folds/pool-history.ts";
 import { BadQuery, tradeRow, trades } from "./folds/trades.ts";
-import { hopOf } from "./folds/hop.ts";
+import { hopOf, placeCmp } from "./folds/hop.ts";
 import { latestDelivered } from "./events.ts";
 import { candles } from "./folds/candles.ts";
 
@@ -88,8 +88,6 @@ const HOUR_MS = 3_600_000;
 const TIMEFRAMES: Record<string, number> = { "1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000 };
 /** The most buckets one candle window may span (the instance's `max_buckets`). */
 const MAX_BUCKETS = 5000;
-/** The page size `/pools/history` takes at most. */
-const HISTORY_LIMIT = 500;
 
 /** One pool as the routes answer it. */
 export interface PoolRow {
@@ -435,13 +433,14 @@ export class Pools {
     if (Math.ceil((to - start) / tf) > MAX_BUCKETS) return problem(400, `the window spans more than ${MAX_BUCKETS} buckets`);
     const f = await this.fold(id);
     const at = from === 0 ? [] : poolsAt(f, from - 1);
-    const events: Rec[] = [];
-    for (let after: string | null = null; ;) {
-      const page = poolHistory(f, new URLSearchParams({ from: String(from), to: String(to), limit: String(HISTORY_LIMIT), ...(after ? { after } : {}) }));
-      events.push(...page.events);
-      if (!page.next) break;
-      after = page.next;
-    }
+    // 0.24.0 (skein-amm 0.52.0: `at` a block's time or a step's, not monotonic): the window's hops are those whose
+    // EFFECTIVE time (fold.ts `effectiveAt`) is in [from, to) — the continuation of the `/pools/at` prefix above —
+    // applied oldest first by (effective time, place): each pool's own history order kept, the pools merged by time,
+    // and each bucketed at its effective time (the `at` handed to marketCandles).
+    const eff = f.effectiveAt();
+    const events: Rec[] = f.hops.filter((h) => eff.get(h)! >= from && eff.get(h)! < to)
+      .sort((x, y) => eff.get(x)! - eff.get(y)! || placeCmp(x.place, y.place))
+      .map((h) => ({ ...h.row, at: eff.get(h)! }));
     return jsonAnswer(200, marketCandles(Array.isArray(at) ? at : [], events, tf), { "cache-control": CACHE });
   }
 

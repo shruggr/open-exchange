@@ -5,7 +5,7 @@
 // Kept: every hop in log order (a reverted hop's transaction dropped from it), and each pool's latest hop (its
 // current state). Every read is a function of these (one module per route: trades.ts, candles.ts, stats.ts,
 // pools-at.ts, pool-history.ts, positions.ts, pools.ts).
-import { hopOf, type Hop } from "./hop.ts";
+import { hopOf, placeCmp, type Hop } from "./hop.ts";
 import type { Rec } from "../events.ts";
 
 export type Status = "live" | "rescinded" | "closed";
@@ -52,14 +52,38 @@ export class TokenFold {
     return [...this.current.values()].filter((h) => this.status(h.poolId) === "live").sort((x, y) => (x.outpoint! < y.outpoint! ? -1 : x.outpoint! > y.outpoint! ? 1 : 0));
   }
 
-  /** The swaps, oldest first by (at, txid) — the instance's `trades` order. */
+  /**
+   * The swaps, oldest first by (at, place) — the `trades` order. 0.24.0 (skein-amm 0.52.0: a hop recorded mined carries
+   * its block's time, so the swaps of one block share an `at`): a tie is broken by the hop's event place, the order the
+   * instance recorded them in (a pool's chained swaps in their chain order), never by txid.
+   */
   swaps(): Hop[] {
-    return this.hops.filter((h) => h.kind === "swap").sort((x, y) => x.at - y.at || (x.txid < y.txid ? -1 : x.txid > y.txid ? 1 : 0));
+    return this.hops.filter((h) => h.kind === "swap").sort((x, y) => x.at - y.at || placeCmp(x.place, y.place));
   }
 
-  /** One pool's hops in its history order (at, then swaps). */
+  /**
+   * One pool's hops in its history order: their event places (the instance's own order), not `at` (0.24.0: block
+   * times are not monotonic, and block-stamped and step-stamped hops mix, so a later hop can carry a smaller `at`).
+   */
   poolHops(poolId: string): Hop[] {
-    return this.hops.filter((h) => h.poolId === poolId).sort((x, y) => x.at - y.at || x.swaps - y.swaps);
+    return this.hops.filter((h) => h.poolId === poolId).sort((x, y) => placeCmp(x.place, y.place));
+  }
+
+  /**
+   * Each hop's effective time (0.24.0): the greatest `at` along its pool's history up to and including it. A hop
+   * spends its predecessor's output, so it happened no earlier than every hop before it: a hop whose own `at` is
+   * smaller than an earlier hop's (block header times out of order, or a block-stamped hop after a step-stamped one)
+   * is taken to have happened when its predecessor did. Equal to `at` wherever `at` rises along the history.
+   */
+  effectiveAt(): Map<Hop, number> {
+    const out = new Map<Hop, number>();
+    const by = new Map<string, Hop[]>();
+    for (const h of this.hops) { const l = by.get(h.poolId); if (l) l.push(h); else by.set(h.poolId, [h]); }
+    for (const l of by.values()) {
+      let top = -Infinity;
+      for (const h of l.sort((x, y) => placeCmp(x.place, y.place))) { top = Math.max(top, h.at); out.set(h, top); }
+    }
+    return out;
   }
 
   /** Every pool id seen. */
