@@ -13,8 +13,8 @@
       "hash": "bbbf4c31cfe8a269867d19c218bf85cd5e291fd1"
     },
     {
-      "url": "https://github.com/shruggr/skein-amm/archive/bfdab2e441652fa3c3b3b021fb09c844bfb2db37.tar.gz",
-      "hash": "f933fb81081a56ade04166a43676619aea890a5d"
+      "url": "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.50.0.tar.gz",
+      "hash": "466870066245915f041ae5f531e806a53d7b32fb"
     }
   ],
   "routes": [
