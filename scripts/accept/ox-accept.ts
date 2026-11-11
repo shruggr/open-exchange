@@ -1056,8 +1056,17 @@ try {
     // One block: [coinbase, dZ, X1] (the last leaf duplicated), every leaf in the one path.
     const hZ = headers.length + 1;
     const cbz = "7a".repeat(32);
-    const pathZ = new MerklePath(hZ, [[{ offset: 0, hash: cbz }, { offset: 1, hash: dZ.id("hex"), txid: true }, { offset: 2, hash: X1.id("hex"), txid: true }, { offset: 3, duplicate: true }]]);
-    headers.push(mine(sha256d(headers.at(-1)!), internal(pathZ.computeRoot(dZ.id("hex"))), 1_790_200_000 + hZ * 600));
+    // Every node a leaf's walk needs, given at its own level (offset 3 the duplicate X1 written out, and the level-1
+    // node over offsets 2-3): the kernel's verifier walks each level's listed nodes.
+    const x1x1 = Buffer.from(sha256d(Buffer.concat([internal(X1.id("hex")), internal(X1.id("hex"))]))).reverse().toString("hex");
+    const cbdz = Buffer.from(sha256d(Buffer.concat([internal(cbz), internal(dZ.id("hex"))]))).reverse().toString("hex");
+    const pathZ = new MerklePath(hZ, [
+      [{ offset: 0, hash: cbz }, { offset: 1, hash: dZ.id("hex"), txid: true }, { offset: 2, hash: X1.id("hex"), txid: true }, { offset: 3, hash: X1.id("hex") }],
+      [{ offset: 0, hash: cbdz }, { offset: 1, hash: x1x1 }],
+    ]);
+    // The block's merkle root, as mineAlone computes one (internal byte order): sha256d(sha256d(cb ‖ dZ) ‖ sha256d(X1 ‖ X1)).
+    const rootZ = sha256d(Buffer.concat([sha256d(Buffer.concat([internal(cbz), internal(dZ.id("hex"))])), sha256d(Buffer.concat([internal(X1.id("hex")), internal(X1.id("hex"))]))]));
+    headers.push(mine(sha256d(headers.at(-1)!), rootZ, 1_790_200_000 + hZ * 600));
     dZ.merklePath = pathZ;
     pushHeader();
     await until("swap's chain at Z's block", async () => { const t = await (await r.hydrate(SWAP)).kernel.chainTip(); return t && t.height >= hZ ? t : undefined; });
@@ -1066,6 +1075,8 @@ try {
     await x.exchange.idle();
     keep(x, Z);
     check(!!upZ, "Z enabled: its deploy fed with the block's path (covering X1 too)");
+    if (!upZ) process.stdout.write(`  Z: host row ${JSON.stringify(x.db.get(Z)?.status ?? null)}; swap's amm/token/Z ${(await get(`/@${SWAP}/events/amm/token/${Z}?latest=1`)).text.slice(0, 300)}\n`);
+    if (upZ) {
     const tmZ = `tm_color_${Z}`;
     const C = new Transaction();
     C.addInput({ sourceTransaction: X1, sourceOutputIndex: 0, unlockingScriptTemplate: new P2PKH().unlock(holder) });
@@ -1090,11 +1101,13 @@ try {
     await Rt.sign();
     const rBeef = new Beef();
     rBeef.mergeTransaction(dZ); rBeef.mergeRawTx(X1.toBinary()); rBeef.mergeRawTx(C.toBinary()); rBeef.mergeRawTx(Rt.toBinary());
+    // The broadcaster refuses it at intake (ARC 465, an invalid transaction → REJECTED, skein 0.8.0 arc.ts): R is
+    // recorded rejected before any status could admit it.
+    arcade.mode = "reject";
     const firstR = fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmZ]) }, body: Uint8Array.from(rBeef.toBinary()), signal: AbortSignal.timeout(60_000) }).then(async (q) => ({ status: q.status, body: await q.json().catch(() => ({})) as Record<string, unknown> }), (e: Error) => ({ status: 0, body: { error: e.name } as Record<string, unknown> }));
-    await until("R at the fake Arcade", () => arcade.txs.has(Rt.id("hex")) ? true : undefined, 30_000);
-    arcade.emit(Rt.id("hex"), { txStatus: "REJECTED" });
     const r1 = await firstR;
-    check(r1.status === 400 && r1.body.code === "ERR_REJECTED", `R broadcast, then REJECTED by the network: the door answers 400 ${String(r1.body.code)}`);
+    arcade.mode = "ok";
+    check(r1.status === 400 && r1.body.code === "ERR_REJECTED", `R broadcast and REJECTED by the network: the door answers ${r1.status} ${String(r1.body.code)} (${JSON.stringify(r1.body).slice(0, 160)})`);
     // R mined, and submitted again with its proof: admitted.
     const hR2 = mineAlone(Rt);
     pushHeader();
@@ -1104,6 +1117,7 @@ try {
     const r2 = await fetch(`${R}/submit`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-topics": JSON.stringify([tmZ]) }, body: Uint8Array.from(proved.toBinary()), signal: AbortSignal.timeout(60_000) }).then(async (q) => ({ status: q.status, body: await q.json().catch(() => ({})) as Record<string, { outputsToAdmit?: number[] }> }), (e: Error) => ({ status: 0, body: { error: e.name } as never }));
     const rNow = await getJson(`/@${Z}/events/chain/tx/${Rt.id("hex")}?latest=1`) as Array<{ record?: { status?: string } }> | undefined;
     check(r2.status === 200 && (r2.body[tmZ]?.outputsToAdmit ?? []).includes(0) && rNow?.[0]?.record?.status === "mined", `R recorded rejected, then submitted with its proof: admitted (${r2.status} ${JSON.stringify(r2.body)}; chain/tx ${JSON.stringify(rNow?.[0]?.record?.status)})`);
+    }
   }
 
   // ------------------------------------------------ disable, enable again
