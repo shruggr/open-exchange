@@ -101,7 +101,8 @@ come in event order, and `at` is the block's time when the transaction was mined
 [{ "outpoint": "a.1", "tokenId": "<id>", "spentBy": "<txid>" }, { "outpoint": "b.2" }]
 
 // GET /amm/lp/fees?pool=<poolId>,<poolId>&from=<ms>&to=<ms>  (from ≤ at < to, both optional;
-// a buy's feeLp in sats, a sell's in the pool's token; amounts are decimal strings)
+// a buy's feeLp in sats, a sell's in the pool's token; amounts are decimal strings;
+// the client's lpFees(poolIds, {from?, to?}) reads it, amounts as bigints, amm-client 0.55.1)
 { "from": 1793000000000, "to": 1793086400000, "sats": "42",
   "tokens": [{ "tokenId": "<id>", "amount": "105" }], "swaps": 3, "pools": 1,
   "byPool": [{ "poolId": "<poolId>", "tokenId": "<id>", "sats": "42", "tokens": "105", "swaps": 3 }] }
