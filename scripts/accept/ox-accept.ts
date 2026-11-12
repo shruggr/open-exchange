@@ -81,7 +81,7 @@ const sdkCjs = createRequire(fileURLToPath(import.meta.resolve("@dcasegr/skein/p
 const sdk = await import(pathToFileURL(sdkCjs).href) as Sdk;
 // 0.15.0: the paid enable's payer — AuthFetch and its wallet's keys from the sdk's ESM build, as skein's keyWallet is.
 const esm = await import(pathToFileURL(join(dirname(sdkCjs), "../esm/mod.js")).href) as Sdk;
-const { KeyDeriver, LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } = sdk;
+const { Hash, KeyDeriver, LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } = sdk;
 const sk = await load();
 const { RawBox } = sk.raw;
 const { keyWallet } = await skein<typeof import("@dcasegr/skein/dist/wallet.js")>("src/wallet.ts");
@@ -164,17 +164,20 @@ function deploy(seed: number, sym: string, dec: number) {
 // ---------------------------------------------------------------- pools (0.11.0: GET /amm/pools, /@<id>/amm/pools)
 // A pool output as skein-amm writes it (src/pool.zig, docs/AMM.md): the 1Color value prefix, the Pool code
 // (its template with the readonly args spliced in at the slots), OP_RETURN, the state (TokenReserve,
-// LpPubKey, ValidatorPubKey, ValidatorIdentity, Nonce, the Affirmation). The template comes from the
-// token app's own tree (src/fixtures/pool_artifact.zig) as the instance holds it.
+// LpPubKey, ValidatorPubKey, ValidatorIdentity, Nonce, LpSatsPkh, LpTokenPkh, the Affirmation; 0.28.0,
+// skein-amm 0.55.0 layout 3). The template and its parameter numbers come from the token app's own tree
+// (src/fixtures/pool_artifact.zig) as the instance holds it.
 const le64 = (v: bigint) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt.asUintN(64, v)); return b; };
 const valueScript = (assetId: Uint8Array, amount: number, lock: InstanceType<typeof LockingScript>) =>
   LockingScript.fromBinary([...new LockingScript().writeBin(Array.from(assetId)).writeNumber(amount).writeOpCode(0x6d).toBinary(), ...lock.toBinary()]);
-interface PoolTemplate { code: Buffer; slots: Array<{ offset: number; param: number }> }
+interface PoolTemplate { code: Buffer; slots: Array<{ offset: number; param: number }>; assetParam: number; feeParams: [number, number, number] }
 function templateOf(zig: string): PoolTemplate {
   const hex = /script_hex = "([0-9a-f]+)"/.exec(zig)?.[1];
   const slots = [...zig.matchAll(/\.offset = (\d+), \.param = (\d+)/g)].map((m) => ({ offset: Number(m[1]), param: Number(m[2]) }));
-  if (!hex || !slots.length) throw new Error("pool_artifact.zig: no script_hex / slots");
-  return { code: Buffer.from(hex, "hex"), slots: slots.sort((a, b) => a.offset - b.offset) };
+  const param = (n: string) => Number(new RegExp(`param_${n} = (\\d+);`).exec(zig)?.[1] ?? NaN);
+  const assetParam = param("asset_id"), feeParams: [number, number, number] = [param("lp_fee_bps"), param("validator_fee_bps"), param("commission_bps")];
+  if (!hex || !slots.length || [assetParam, ...feeParams].some(Number.isNaN)) throw new Error("pool_artifact.zig: no script_hex / slots / params");
+  return { code: Buffer.from(hex, "hex"), slots: slots.sort((a, b) => a.offset - b.offset), assetParam, feeParams };
 }
 /** A deploy pool (the lookup's rule: affirmed by its ValidatorIdentity's child keyed by its Nonce), signed by `identity`. */
 function poolScript(t: PoolTemplate, o: { assetId: Uint8Array; reserve: number; sats: number; fees: [number, number, number]; lp: string; identity: InstanceType<typeof PrivateKey> }) {
@@ -183,16 +186,18 @@ function poolScript(t: PoolTemplate, o: { assetId: Uint8Array; reserve: number; 
   for (const s of t.slots) {
     if (t.code[s.offset] !== 0x00) throw new Error(`pool template: no placeholder at ${s.offset}`);
     code.push(...t.code.subarray(at, s.offset));
-    code.push(...(s.param === 6 ? [0x20, ...o.assetId] : new LockingScript().writeNumber(o.fees[s.param - 7]!).toBinary()));
+    code.push(...(s.param === t.assetParam ? [0x20, ...o.assetId] : new LockingScript().writeNumber(o.fees[t.feeParams.indexOf(s.param)]!).toBinary()));
     at = s.offset + 1;
   }
   code.push(...t.code.subarray(at));
   const nonce = createHash("sha256").update(`pool ${o.lp}`).digest();
   const child = new KeyDeriver(o.identity).derivePrivateKey([1, "amm pool"], nonce.toString("hex"), "anyone");
   const lp = Buffer.from(o.lp, "hex"), validator = Buffer.from(child.toPublicKey().toDER() as number[]), identity = Buffer.from(o.identity.toPublicKey().toDER() as number[]);
-  const msg = Buffer.concat([Buffer.from("skein-amm affirm 2"), o.assetId, ...o.fees.map((f) => le64(BigInt(f))), le64(BigInt(o.reserve)), le64(BigInt(o.sats)), lp, validator, identity, nonce]);
+  // The two LP fee addresses (any 20 bytes to the lookup; the LP key's hash for both here).
+  const lpPkh = Buffer.from(Hash.hash160(Array.from(lp)) as number[]);
+  const msg = Buffer.concat([Buffer.from("skein-amm affirm 3"), o.assetId, ...o.fees.map((f) => le64(BigInt(f))), le64(BigInt(o.reserve)), le64(BigInt(o.sats)), lp, validator, identity, nonce, lpPkh, lpPkh]);
   const der = Buffer.from(child.sign(Array.from(msg)).toDER() as number[]);
-  const state = Buffer.concat([le64(BigInt(o.reserve)), lp, validator, identity, nonce, Buffer.from([der.length]), der]);
+  const state = Buffer.concat([le64(BigInt(o.reserve)), lp, validator, identity, nonce, lpPkh, lpPkh, Buffer.from([der.length]), der]);
   const prefix = new LockingScript().writeBin(Array.from(o.assetId)).writeNumber(o.reserve).writeOpCode(0x6d).toBinary();
   return LockingScript.fromBinary([...prefix, ...code, 0x6a, ...state]);
 }

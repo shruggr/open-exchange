@@ -126,20 +126,16 @@ The wallet must be BRC-100 and carry the BRC-207 1Color permission module
   wallet action. The fee walk runs first; it refuses when the walk cannot catch up. On an
   unknown failure, fall back to close then deploy.
 - **Positions**: `myPositions()` (`feesEarnedSats` / `feesEarnedTokens`, `rescinded`, `closed`).
-  "Fees earned" is the LIFETIME figure the exchange reports for the pool, not what can be
-  collected.
-- **Fee walk**: `syncFees()` → `{poolId, reason}[]` files each uncollected LP fee output of
-  every reported position into the wallet's fees basket `openex fees`. Silent, never throws:
-  call it on every page load, as `settleSwaps`. It answers the pools it could not walk.
-- **Available to collect**: `availableFees()` → `{sats, tokens: [{tokenId, amount}], outputs}`,
-  ONE `listOutputs` of `openex fees`. Nothing reaches the wallet's balance until the LP collects.
-- **Collect fees**: `collectFees({feeRateSatsPerKb?})` runs the walk, then moves `openex fees`
-  into the wallet's balance in pages, each ONE wallet action: one `p color` output per token on
-  the page, no sats output (the wallet keeps the sats as change). The pools stay open; nothing
-  needs collecting first. Result: `txid?` (last page), `txids`, `pages`, `sats` / `tokens`
-  (gross; the balance rises by the sats less miner fees), `stopped?`, `refused?: {page, error}`,
-  `remaining?`. A refusal on page 1 throws; on a later page, call `collectFees` again for the
-  rest.
+  "Fees earned" is the LIFETIME figure the exchange reports for the pool.
+- **LP fees** (0.28.0, skein-amm 0.55.0): nothing to collect. Each pool names two LP fee
+  addresses in its state, derived by the LP's wallet from the pool's LP keyID: every swap pays
+  the LP fee straight to the LP's wallet (a sats-in swap to a BRC-29 key, a token-in swap to a
+  1Color receiving key). The wallet takes them in when it catches up with the pool.
+- **Fee walk**: `syncFees()` → `{poolId, reason}[]`: the catch-up over every reported position,
+  one `internalizeAction` per swap (a sats fee as a `wallet payment`, a token fee as a
+  `p color` receipt into the token's value basket). Silent, never throws: call it on every page
+  load, as `settleSwaps`. It answers the pools it could not walk. There is no
+  `availableFees`, `collectFees` or fees basket.
 - **Size**: keep each pool's sats well above the validator's `minLegSats` (100000 on the hosted
   testnet validator today; read it, do not hardcode). Swaps under it fail `below_minimum`.
 - **Deploy a token**: `deploy1Color.execute(ctx, {amount, decimals, symbol, icon?})` from
@@ -232,9 +228,9 @@ before pinning.
 <!-- generated: versions -->
 | package | version |
 |---|---|
-| `open-exchange` | 0.27.1 (this host) |
-| `@dcasegr/amm-engine` | 0.54.1 (the host's dependency) |
-| `@dcasegr/amm-client` | 0.54.1 (pin to the same version as the engine) |
+| `open-exchange` | 0.28.0 (this host) |
+| `@dcasegr/amm-engine` | 0.55.0 (the host's dependency) |
+| `@dcasegr/amm-client` | 0.55.0 (pin to the same version as the engine) |
 <!-- /generated -->
 
 The wallet side, as the published client pins it (hand-maintained):

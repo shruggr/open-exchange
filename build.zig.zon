@@ -6,11 +6,11 @@
     .dependencies = .{
         // The AMM library (shruggr/skein-amm): its deploy reader (src/deploy.zig) and fixtures, and
         // through it the overlay engine's SDK modules and the 1Color module the swap program links.
-        // The AMM library (shruggr/skein-amm v0.52.1):
+        // The AMM library (shruggr/skein-amm v0.55.0):
         // (src/deploy.zig) and fixtures, and through it the overlay engine's SDK modules and the 1Color module.
         .skein_amm = .{
-            .url = "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.52.1.tar.gz",
-            .hash = "skein_amm-0.52.1-IsSTBhFqSgDdaT8tsPIulPOXivACykPgbN1T6asRNGMn",
+            .url = "https://github.com/shruggr/skein-amm/archive/refs/tags/v0.55.0.tar.gz",
+            .hash = "skein_amm-0.55.0-IsSTBrG7SgBO-qieObRrE6mTc1EH0aOr6g9ghg0Z5kK_",
         },
         // skein-sdk v0.22.1: the signer app's client (lib/signer.zig) and the named call (`sk.callAs`).
         .skein_sdk_signer = .{
