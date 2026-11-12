@@ -15,7 +15,7 @@ dependencies.
    The client matches `lockingScript` with a regex, so raw rows look empty and a swap stops
    `fees`. Wrap the wallet in a Proxy that hex-normalizes those results.
 3. **The REAL color module** `ColorPermissionModule` (from `@bsv/color-permission-module`,
-   aliased to `@bopen-io/color-permission-module@0.2.2`): constructed with the RAW (normalized)
+   aliased to `@bopen-io/color-permission-module@0.2.3`): constructed with the RAW (normalized)
    toolbox wallet, never the manager; `requestTokenAccess: async () => true` (consent
    auto-approved); `provider` = a `ColorOverlayProvider` against the exchange host.
 4. **Permissions manager**: `LocalWalletPermissionsManager` from `@1sat/wallet`, with
@@ -34,9 +34,9 @@ Put them in BOTH `dependencies` and `overrides`, then confirm one copy each:
 find node_modules -path '*/@1sat/actions/package.json' -o -path '*/color-permission-module/package.json' -o -path '*/wallet-toolbox-client/package.json'
 ```
 
-- `@1sat/actions` `0.1.5`: ONE copy. `@dcasegr/amm-client` pins it exactly; a second copy
+- `@1sat/actions` `0.1.6`: ONE copy. `@dcasegr/amm-client` pins it exactly; a second copy
   nests and splits the module's state.
-- `@bsv/color-permission-module` → `npm:@bopen-io/color-permission-module@0.2.2`: ONE copy, the
+- `@bsv/color-permission-module` → `npm:@bopen-io/color-permission-module@0.2.3`: ONE copy, the
   fork Yours runs. The client peers `^0.1`.
 - `@bsv/wallet-toolbox-client` → `npm:@bopen-io/wallet-toolbox-client@2.15.3`: upstream's spend
   check rejects inputs the module adds to an action (staging, Move back, pool flows). The fork
@@ -48,12 +48,12 @@ find node_modules -path '*/@1sat/actions/package.json' -o -path '*/color-permiss
   "private": true,
   "type": "module",
   "dependencies": {
-    "@1sat/actions": "0.1.5",
+    "@1sat/actions": "0.1.6",
     "@1sat/templates": "0.1.1",
     "@1sat/types": "0.1.1",
     "@1sat/wallet": "0.1.2",
     "@1sat/wallet-node": "0.1.2",
-    "@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.2",
+    "@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.3",
     "@bsv/sdk": "4.0.1",
     "@bsv/wallet-toolbox": "2.15.3",
     "@bsv/wallet-toolbox-client": "npm:@bopen-io/wallet-toolbox-client@2.15.3",
@@ -61,8 +61,8 @@ find node_modules -path '*/@1sat/actions/package.json' -o -path '*/color-permiss
     "@dcasegr/amm-engine": "0.55.0"
   },
   "overrides": {
-    "@1sat/actions": "0.1.5",
-    "@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.2",
+    "@1sat/actions": "0.1.6",
+    "@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.3",
     "@bsv/wallet-toolbox-client": "npm:@bopen-io/wallet-toolbox-client@2.15.3"
   }
 }

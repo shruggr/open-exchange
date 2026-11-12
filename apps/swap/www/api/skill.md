@@ -106,8 +106,8 @@ The wallet must be BRC-100 and carry the BRC-207 1Color permission module
 - **Browser**: `@1sat/react` `WalletProvider` + `useWallet()` → `wallet` (Yours exposes BRC-100
   as `window.CWI`; it runs the module). Pass `wallet` to `createClient` or
   `readClient.withWallet(wallet)`, which keeps the reads already made. Force one copy with
-  package.json `overrides`: `"@1sat/actions": "0.1.5"`,
-  `"@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.2"`.
+  package.json `overrides`: `"@1sat/actions": "0.1.6"`,
+  `"@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.3"`.
 - **Headless (Bun)**: toolbox wallet from `@1sat/wallet-node` (bun-sqlite) + the hex shim +
   `LocalWalletPermissionsManager` with the REAL module under `color` + an admin-originator
   proxy. Needs THREE overrides: the two above plus
@@ -237,8 +237,8 @@ The wallet side, as the published client pins it (hand-maintained):
 
 | package | version |
 |---|---|
-| `@1sat/actions` | 0.1.5 |
-| `@bsv/color-permission-module` → `@bopen-io/color-permission-module` | 0.2.2 |
+| `@1sat/actions` | 0.1.6 |
+| `@bsv/color-permission-module` → `@bopen-io/color-permission-module` | 0.2.3 |
 | `@bsv/wallet-toolbox-client` → `@bopen-io/wallet-toolbox-client` (headless) | 2.15.3 |
 | `@bsv/sdk` | 4.0.1 |
 

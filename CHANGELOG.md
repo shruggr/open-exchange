@@ -20,6 +20,8 @@ On skein-amm 0.55.0: LP fees are paid straight to the LP's wallet.
   amm-client 0.55.0; the skill no longer describes `availableFees`, `collectFees` or the fees basket.
 - build.zig.zon on skein-amm v0.55.0 (apps/swap/bin/config.wasm unchanged); swap app 0.28.0.
 - The acceptance's fixture pools are written in layout 3 with message v3.
+- The skill, its examples and wallet-headless.md on `@bopen-io/color-permission-module` 0.2.3 and
+  `@1sat/actions` 0.1.6 (the versions skein-amm 0.55.0's pages and client pin).
 
 Upgrading: pools made under 0.27.x are no pools to 0.28.0, and the upgrade installs the new token app into
 every token instance. Before a host upgrades, its LPs collect their fees and close their pools with 0.27.x;
