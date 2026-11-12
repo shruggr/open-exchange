@@ -17,6 +17,8 @@ Nothing needs setting. The first start takes a few minutes: it syncs the block h
 
 The public read API is documented at `<origin>/api/` (the reference page) and `<origin>/api/openapi.json` (OpenAPI 3.1; sources in `api/`, copied into the pages by `scripts/www.sh`).
 
+The agent skill is at `<origin>/api/skill.md` (with `<origin>/api/llms.txt`): `skills/open-exchange`, mirrored from b-open-io/1sat-sdk, its route table and versions regenerated at build (`scripts/skill-sync.js`; `npm pack` fails on a stale copy).
+
 The read API's routes, plain GETs, and the pool event feeds (0.14.0: every pool read by the pool id â€” the deploy outpoint `<txid>_<vout>`, a clean break, no `?lp=`; one price; the validator's minimum leg; the pools route no longer streams):
 
 | route | answer |
@@ -265,7 +267,8 @@ when its version differs, installed in place the same way. (0.21.0: no reindex â
 ```
 zig build test                      # the swap program's tests
 zig build bin                       # apps/swap/bin/config.wasm (committed)
-scripts/www.sh                      # apps/swap/www (committed): skein-amm 0.49.0's web/ui + the 1Color pages (skein-1color v0.14.0's www/) + api/
+scripts/www.sh                      # apps/swap/www (committed): skein-amm 0.49.0's web/ui + the 1Color pages (skein-1color v0.14.0's www/) + api/ + the skill
+scripts/www.sh api                  # apps/swap/www/api only: api/ + skills/open-exchange (its generated blocks rewritten first)
 npm install --no-save <dcasegr-skein-0.7.0.tgz> <dcasegr-amm-engine-0.49.0.tgz>   # from their `npm pack` until published
 npm run typecheck                   # host/ and scripts/ against node_modules/@dcasegr/skein
 npm test                            # host/*.test.ts: unit tests against stubs (the swap relay's answer)
