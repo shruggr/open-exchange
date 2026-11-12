@@ -254,7 +254,7 @@ when its version differs, installed in place the same way. (0.21.0: no reindex â
 upgrade installs the new token app into every token instance as above. Before upgrading a host, its LPs
 collect their fees and close their pools with 0.27.x; or the host is relaunched fresh. Hosts on 0.27.x and
 0.28.0 do not recognise each other's pools. The 0.28 line is published under the npm tag `next`:
-`npm install open-exchange@0.28.1`.
+`npm install open-exchange@0.28.2`.
 
 `run` takes every setting `skein-host run` takes from `host.env`. It serves everything
 `skein-host` serves:

@@ -229,7 +229,7 @@ before pinning.
 <!-- generated: versions -->
 | package | version |
 |---|---|
-| `open-exchange` | 0.28.1 (this host) |
+| `open-exchange` | 0.28.2 (this host) |
 | `@dcasegr/amm-engine` | 0.55.1 (the host's dependency) |
 | `@dcasegr/amm-client` | 0.55.1 (pin to the same version as the engine) |
 <!-- /generated -->

@@ -40,7 +40,7 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/terms`,
 `/api/openapi.json`, `/api/`.
 
 <!-- generated: routes -->
-### 35 routes, 8 tags (OpenAPI document version 0.28.1)
+### 35 routes, 8 tags (OpenAPI document version 0.28.2)
 
 | tag | method | path | query (`*` required) | cache | summary |
 |---|---|---|---|---|---|
