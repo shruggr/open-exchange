@@ -21,6 +21,8 @@ release commits and tags (`git log`, `git tag -n`).
   rebuilt from skein-amm v0.54.2's web/ui (www.sh AMM_TAG v0.54.1 → v0.54.2); the skill, its examples and
   wallet-headless.md on amm-engine / amm-client 0.54.2. The token image and host/pool-code.ts stay as
   0.27.1 has them (token app skein-amm v0.52.1); swap app 0.27.2.
+- skein-amm 0.54.2's web (pages and client) on `@bopen-io/color-permission-module` 0.2.3 and `@1sat/actions`
+  0.1.6, as the 0.28 line; the skill, its examples and wallet-headless.md name those pins.
 - The same change as 0.28.1, on the 0.27 line.
 
 Upgrading from 0.27.1: npm install and restart; the first start builds analytics.sqlite from each
