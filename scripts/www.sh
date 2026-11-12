@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 OX="$(pwd)"
-AMM_TAG=v0.54.0
+AMM_TAG=v0.54.1
 TAG=v0.14.0
 if [ "${1:-}" != api ]; then
 AMM_DIR="${AMM_DIR:-$OX/../skein-amm}"
