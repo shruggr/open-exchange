@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Open Exchange public read API",
-    "version": "0.26.0",
+    "version": "0.27.0",
     "description": "Plain HTTP reads over the exchange's index: JSON unless the route says bytes; list parameters are comma-separated and answered one record per key in query order. Writes stay on the overlay protocol (`POST /submit`, BRC-22; `POST /lookup`, BRC-24) and on `/sendMessage` and `/call`; the host reads `/<app>/.live/<topic>` and `/<app>/.events` stay as they are. Cache classes: `state` = `Cache-Control: public, max-age=5`; `imm` = `public, max-age=31536000, immutable`, only for the bytes of a proven (mined) transaction, else `state`; `stream` = `text/event-stream`, no cache. `{token}` is a token id `<txid>_<vout>`; a token's routes are under its instance, `/@<token>/amm/…`. Each operation carries `x-cache` (its class) and `x-answered-by`."
   },
   "servers": [
@@ -2353,7 +2353,7 @@
                   "openapi": "3.1.0",
                   "info": {
                     "title": "Open Exchange public read API",
-                    "version": "0.26.0"
+                    "version": "0.27.0"
                   },
                   "servers": [
                     {
@@ -2409,7 +2409,7 @@
       "get": {
         "operationId": "P18c",
         "summary": "The agent skill",
-        "description": "The open-exchange agent skill (SKILL.md: frontmatter, then markdown): how to read the market, run a swap, deploy and close pools, list a token, run and administer an exchange, and recover stuck swaps with `@dcasegr/amm-client`. Its references are at `/api/skill/references/<name>.md` and its examples at `/api/skill/examples/<name>`. Shipped with the `open-exchange` package (`skills/open-exchange`, its route table and versions regenerated from this document and package.json at build); mirrored from b-open-io/1sat-sdk `skills/open-exchange`.",
+        "description": "The open-exchange agent skill (SKILL.md: frontmatter, then markdown): how to read the market, run a swap, deploy and close pools, list a token, run and administer an exchange, and recover stuck swaps with `@dcasegr/amm-client`. Its references are at `/api/skill/references/<name>.md` and its examples at `/api/skill/examples/<name>`. Shipped with the `open-exchange` package (`skills/open-exchange`, its route table and versions regenerated from this document and package.json at build); the source of truth, mirrored to b-open-io/1sat-sdk `skills/open-exchange`.",
         "tags": [
           "docs"
         ],

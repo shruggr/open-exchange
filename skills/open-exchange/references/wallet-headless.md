@@ -57,8 +57,8 @@ find node_modules -path '*/@1sat/actions/package.json' -o -path '*/color-permiss
     "@bsv/sdk": "4.0.1",
     "@bsv/wallet-toolbox": "2.15.3",
     "@bsv/wallet-toolbox-client": "npm:@bopen-io/wallet-toolbox-client@2.15.3",
-    "@dcasegr/amm-client": "0.53.0",
-    "@dcasegr/amm-engine": "0.53.0"
+    "@dcasegr/amm-client": "0.54.0",
+    "@dcasegr/amm-engine": "0.54.0"
   },
   "overrides": {
     "@1sat/actions": "0.1.5",

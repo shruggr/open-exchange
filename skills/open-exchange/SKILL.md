@@ -5,10 +5,10 @@ disable-model-invocation: false
 ---
 
 > This copy ships with the `open-exchange` package and is served by every host at
-> `<origin>/api/skill.md` (references and examples under `<origin>/api/skill/`). The canonical,
-> editable copy is b-open-io/1sat-sdk `skills/open-exchange`. They mirror each other: this repo
+> `<origin>/api/skill.md` (references and examples under `<origin>/api/skill/`). This copy is
+> the source of truth: edit it here, in shruggr/open-exchange `skills/open-exchange`. This repo
 > regenerates the route table and the Versions block at build (`scripts/skill-sync.js`); the
-> sdk copy refreshes from a host's `/api/skill.md`.
+> b-open-io/1sat-sdk copy is a mirror, refreshed from a host's `/api/skill.md`.
 
 # Open Exchange
 
@@ -120,12 +120,26 @@ The wallet must be BRC-100 and carry the BRC-207 1Color permission module
   validator, and deploys are refused. Fees are the validator's (LP accepts them; no fee input).
 - **Deploy**: `deployPosition({tokenId, tokens, sats})` → `{outpoint, txid, warnings?}`. Pool id
   = `outpoint.replace(".", "_")`. One pool per deploy; no top-up, no partial withdraw.
-- **Close**: `closePosition({outpoint})` → `{txid, sats, tokens}` back to the wallet.
+- **Close**: `closePosition({poolId})` (the pool id, `<txid>_<vout>`) → `{txid, sats, tokens}`
+  back to the wallet. The fee walk runs first.
 - **Rebalance**: `rebalancePosition({outpoint, tokens, sats})` closes and redeploys in ONE
-  wallet action. On an unknown failure, fall back to close then deploy.
-- **Positions**: `myPositions()` (fees earned, `rescinded`, `closed`).
-- **Collect fees**: `collectFees()` spends the LP's `openex fees` basket (sats to one BRC-29
-  address, each token's sum to one `p color` output); the pools stay open.
+  wallet action. The fee walk runs first; it refuses when the walk cannot catch up. On an
+  unknown failure, fall back to close then deploy.
+- **Positions**: `myPositions()` (`feesEarnedSats` / `feesEarnedTokens`, `rescinded`, `closed`).
+  "Fees earned" is the LIFETIME figure the exchange reports for the pool, not what can be
+  collected.
+- **Fee walk**: `syncFees()` → `{poolId, reason}[]` files each uncollected LP fee output of
+  every reported position into the wallet's fees basket `openex fees`. Silent, never throws:
+  call it on every page load, as `settleSwaps`. It answers the pools it could not walk.
+- **Available to collect**: `availableFees()` → `{sats, tokens: [{tokenId, amount}], outputs}`,
+  ONE `listOutputs` of `openex fees`. Nothing reaches the wallet's balance until the LP collects.
+- **Collect fees**: `collectFees({feeRateSatsPerKb?})` runs the walk, then moves `openex fees`
+  into the wallet's balance in pages, each ONE wallet action: one `p color` output per token on
+  the page, no sats output (the wallet keeps the sats as change). The pools stay open; nothing
+  needs collecting first. Result: `txid?` (last page), `txids`, `pages`, `sats` / `tokens`
+  (gross; the balance rises by the sats less miner fees), `stopped?`, `refused?: {page, error}`,
+  `remaining?`. A refusal on page 1 throws; on a later page, call `collectFees` again for the
+  rest.
 - **Size**: keep each pool's sats well above the validator's `minLegSats` (100000 on the hosted
   testnet validator today; read it, do not hardcode). Swaps under it fail `below_minimum`.
 - **Deploy a token**: `deploy1Color.execute(ctx, {amount, decimals, symbol, icon?})` from
@@ -218,9 +232,9 @@ before pinning.
 <!-- generated: versions -->
 | package | version |
 |---|---|
-| `open-exchange` | 0.26.0 (this host) |
-| `@dcasegr/amm-engine` | 0.53.0 (the host's dependency) |
-| `@dcasegr/amm-client` | 0.53.0 (pin to the same version as the engine) |
+| `open-exchange` | 0.27.0 (this host) |
+| `@dcasegr/amm-engine` | 0.54.0 (the host's dependency) |
+| `@dcasegr/amm-client` | 0.54.0 (pin to the same version as the engine) |
 <!-- /generated -->
 
 The wallet side, as the published client pins it (hand-maintained):

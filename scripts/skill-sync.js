@@ -4,8 +4,8 @@
 //   skills/open-exchange/references/api.md  <!-- generated: routes -->   ← api/openapi.json (every operation, by tag)
 //   skills/open-exchange/SKILL.md           <!-- generated: versions --> ← package.json (open-exchange, its engine,
 //                                                                          the matching client)
-// Only the text between a block's markers is rewritten; the prose around it is hand-written. The canonical
-// editable skill is b-open-io/1sat-sdk skills/open-exchange; it refreshes from a host's /api/skill.md.
+// Only the text between a block's markers is rewritten; the prose around it is hand-written. This copy is the
+// source of truth; b-open-io/1sat-sdk skills/open-exchange is its mirror, refreshed from a host's /api/skill.md.
 //   node scripts/skill-sync.js            rewrite the blocks (scripts/www.sh runs it before copying)
 //   node scripts/skill-sync.js --check    exit 1, naming each file, when a committed file differs from what this
 //                                         would write, or when apps/swap/www/api/ differs from its sources
