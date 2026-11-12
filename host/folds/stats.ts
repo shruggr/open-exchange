@@ -1,33 +1,32 @@
-// The instance part of `/stats` (amm-lookup 0.48.1 `stats`, D4: what the host does not recompute): the last fill at or
-// before now, the 24 h volumes and buy / sell counts, the lifetime counters. The host adds tvl, pools, price and
-// its changes (host/pools.ts `mergeStats`), as before.
+// The instance part of `/stats` (amm-lookup 0.48.1 `stats`, D4: what the host does not recompute): the last fill, the
+// 24 h volumes and buy / sell counts, the lifetime counters. The host adds tvl, pools, price and its changes
+// (host/pools.ts `mergeStats`), as before.
+// 0.25.0 (David 2026-11-11: stats from the event log, no re-sort): the last trade is the LAST swap event (whatever its
+// `at`); the 24 h figures (now − 24 h < at ≤ now) are the minute tallies of that day (candles.ts `Tally`), the two
+// edge minutes tallied from their trades inside the window; the lifetime counters are the fold's, kept as each swap
+// arrives and taken back on a revert. After a history load every loaded trade carrying the load's time counts in the
+// first day: accepted (it times out).
 import type { TokenFold } from "./fold.ts";
-import { priceOf } from "./hop.ts";
-import { tokenCounters } from "./counters.ts";
+import { priceOf, type Hop } from "./hop.ts";
 import type { Rec } from "../events.ts";
 
 export const DAY_MS = 86_400_000;
 
 export function instanceStats(f: TokenFold, now: number): Rec {
-  const swaps = f.swaps();
-  let last: (typeof swaps)[number] | undefined;
-  for (const h of swaps) if (h.at <= now) last = h;
+  let last: Hop | undefined;
+  for (let i = f.hops.length - 1; i >= 0; i--) if (f.hops[i]!.kind === "swap") { last = f.hops[i]; break; }
   let volume24hSats = 0n, volume24hTokens = 0n, buys24h = 0, sells24h = 0;
   const start = Math.max(0, now - DAY_MS);
-  for (const h of swaps) {
-    if (h.at <= start || h.at > now) continue;
-    const p = priceOf(h);
-    if (!p) continue;
-    volume24hSats += p.sats; volume24hTokens += p.tokens;
-    if (h.side === "buy") buys24h++; else sells24h++;
+  // The window is start < at ≤ now: the tallies' half-open [start + 1, now + 1).
+  for (const m of f.tally.window(start + 1, now + 1)) {
+    volume24hSats += m.volumeSats; volume24hTokens += m.volumeTokens; buys24h += m.buys; sells24h += m.sells;
   }
-  const t = tokenCounters(f);
   const lp = last ? priceOf(last) : undefined;
   return {
     tokenId: f.tokenId,
     lastTradePrice: lp ?? null,
     volume24hSats, volume24hTokens, buys24h, sells24h,
     lastTradeAt: last?.at ?? null,
-    volumeSats: t.volumeSats, volumeTokens: t.volumeTokens, trades: t.trades,
+    volumeSats: f.volumeSats, volumeTokens: f.volumeTokens, trades: f.trades,
   };
 }

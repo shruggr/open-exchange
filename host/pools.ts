@@ -29,13 +29,9 @@
 //                                `lastTradePrice`, the volumes, `lastTradeAt` the instance's.
 //   GET <origin>/amm/stats      [<a token's GET /@<id>/amm/stats>]   every enabled token's, one array; `?ids=a,b` those
 //                                enabled tokens only, in the query's order.
-//   GET /@<tokenId>/amm/candles?series=market&tf=&from=&to=   (0.14.0) the market-price candles: the pools at `from`
-//                                (`/pools/at?t=from − 1`: the state entering the window), the events of the window
-//                                (`/pools/history?from&to`, paged by `next`), the price (`priceOf(pools).mid`) after
-//                                each event; a bucket of `tf` exists when it holds an event: `o` the price entering
-//                                its first event, `c` after its last, `h` / `l` over those, `volumeSats` /
-//                                `volumeTokens` / `n` from its swaps. Without `series` or `series=fill`: the
-//                                instance's own answer (forwarded).
+//   GET /@<tokenId>/amm/candles?tf=&from=&to=   the fill candles from the fold's minute tallies (host/folds/candles.ts);
+//                                `series=fill` the same; 0.25.0: `series=market` (the market-price series) removed —
+//                                any other series is refused 400.
 //   GET <origin>/amm/positions?pool=id1,id2   [{tokenId, …a row of GET /@<id>/amm/positions?pool=}]   every enabled
 //                                token's rows for the pool ids.
 //   GET <origin>/amm/spends?outpoint=a,b      (0.14.0) [{outpoint, tokenId?, spentBy?}]   one record per outpoint in
@@ -58,7 +54,7 @@ import { instanceStats } from "./folds/stats.ts";
 import { poolsAt } from "./folds/pools-at.ts";
 import { NotFound, poolHistory } from "./folds/pool-history.ts";
 import { BadQuery, tradeRow, trades } from "./folds/trades.ts";
-import { hopOf, placeCmp } from "./folds/hop.ts";
+import { hopOf } from "./folds/hop.ts";
 import { latestDelivered } from "./events.ts";
 import { candles } from "./folds/candles.ts";
 
@@ -84,10 +80,6 @@ export const POOLS_HISTORY_ROUTE = `/${APP}/pools/history`;
 export const POOL_EVENT = "pool";
 const CACHE = "public, max-age=5";
 const HOUR_MS = 3_600_000;
-/** The candle resolutions (the instance's `/candles`), ms. */
-const TIMEFRAMES: Record<string, number> = { "1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000 };
-/** The most buckets one candle window may span (the instance's `max_buckets`). */
-const MAX_BUCKETS = 5000;
 
 /** One pool as the routes answer it. */
 export interface PoolRow {
@@ -126,9 +118,6 @@ export function changeBps(then: Price, now: Price): bigint {
   return d === 0n ? 0n : (n * 10_000n) / d;
 }
 
-/** `a` < `b` as prices (sats per token). */
-const lt = (a: Price, b: Price) => a.sats * b.tokens < b.sats * a.tokens;
-
 /**
  * A token's stats row as this host answers it (0.14.0): the instance's `/stats` row with `tvlSats`, `tvlTokens`
  * and `pools` the sums and the count over `pools` (the listed pools), `price` / `buyPrice` / `sellPrice` =
@@ -154,53 +143,6 @@ export function mergeStats(row: Rec, pools: PoolRow[], then1h: Price | null, the
     ...rest,
     price, buyPrice: now?.buy ?? null, sellPrice: now?.sell ?? null,
   };
-}
-
-/** One market candle (the instance's candle shape). */
-export interface MarketCandle { t: number; o: Price; h: Price; l: Price; c: Price; volumeSats: bigint; volumeTokens: bigint; n: number }
-
-/**
- * The market-price candles (0.14.0) over `start` (the pools entering the window, `/pools/at` rows) and `events`
- * (the window's `/pools/history` events, oldest first): each event applied by its pool id (a deploy or a swap
- * sets the pool's state from the event, a close or a rescind removes it), the price `priceOf(pools).mid` after
- * each; one candle per bucket of `tf` holding an event — `o` the price entering its first event, `c` after its
- * last, `h` / `l` over those (a price that is none is passed over; a bucket with none: no candle); the volumes and
- * `n` from its swaps (a buy: sats in, tokens out; a sell: tokens in, sats out; a swap moving no tokens counts
- * nothing, as the instance's candles).
- */
-export function marketCandles(start: Rec[], events: Rec[], tf: number): MarketCandle[] {
-  const pools = new Map<string, PoolState>();
-  for (const p of start) pools.set(String(p.poolId), poolState(p));
-  const mid = () => priceOf([...pools.values()])?.mid ?? null;
-  const out: MarketCandle[] = [];
-  let cur: { t: number; prices: Price[]; volumeSats: bigint; volumeTokens: bigint; n: number } | undefined;
-  const close = () => {
-    if (!cur || cur.prices.length === 0) return;
-    let h = cur.prices[0]!, l = cur.prices[0]!;
-    for (const p of cur.prices) { if (lt(h, p)) h = p; if (lt(p, l)) l = p; }
-    out.push({ t: cur.t, o: cur.prices[0]!, h, l, c: cur.prices[cur.prices.length - 1]!, volumeSats: cur.volumeSats, volumeTokens: cur.volumeTokens, n: cur.n });
-  };
-  for (const ev of events) {
-    const at = num(ev.at);
-    const t = at - (at % tf);
-    if (!cur || cur.t !== t) {
-      close();
-      const entering = mid();
-      cur = { t, prices: entering ? [entering] : [], volumeSats: 0n, volumeTokens: 0n, n: 0 };
-    }
-    const id = String(ev.poolId);
-    if (ev.type === "deploy" || ev.type === "swap") pools.set(id, poolState(ev));
-    else if (ev.type === "close" || ev.type === "rescind") pools.delete(id);
-    if (ev.type === "swap") {
-      const inn = big(ev.amountIn), outt = big(ev.amountOut);
-      const [s, k] = ev.side === "buy" ? [inn, outt] : [outt, inn];
-      if (k !== 0n) { cur.volumeSats += s; cur.volumeTokens += k; cur.n += 1; }
-    }
-    const after = mid();
-    if (after) cur.prices.push(after);
-  }
-  close();
-  return out;
 }
 
 class ReadError extends Error {
@@ -268,9 +210,8 @@ export class Pools {
       if (route === STATS_ROUTE) return jsonAnswer(200, await this.tokenStats(handle), { "cache-control": CACHE });
       if (route === CANDLES_ROUTE) {
         const series = q.get("series");
-        if (series === "market") return await this.candleAnswer(handle, q);
         if (series === null || series === "fill") return jsonAnswer(200, candles(await this.fold(handle), q), { "cache-control": CACHE });
-        return problem(400, "series: fill or market");
+        return problem(400, "series: fill");
       }
       if (route === TRADES_ROUTE) {
         const f = await this.fold(handle);
@@ -420,28 +361,6 @@ export class Pools {
       try { out.push(await this.tokenStats(id)); } catch (e) { this.say(`${id}: stats: left out of /amm/stats: ${(e as Error).message}`); }
     }
     return out;
-  }
-
-  /** `?series=market` (0.14.0): the market-price candles (`marketCandles`) over the instance's pool history. */
-  private async candleAnswer(id: string, q: URLSearchParams): Promise<RouterResponse> {
-    const bad = "want ?series=market&tf=1m|5m|15m|1h|4h|1d&from=<ms>&to=<ms>";
-    const tf = TIMEFRAMES[q.get("tf") ?? ""];
-    const int = (s: string | null) => s !== null && /^\d+$/.test(s) ? Number(s) : undefined;
-    const from = int(q.get("from")), to = int(q.get("to"));
-    if (tf === undefined || from === undefined || to === undefined || to < from) return problem(400, bad);
-    const start = from - (from % tf);
-    if (Math.ceil((to - start) / tf) > MAX_BUCKETS) return problem(400, `the window spans more than ${MAX_BUCKETS} buckets`);
-    const f = await this.fold(id);
-    const at = from === 0 ? [] : poolsAt(f, from - 1);
-    // 0.24.0 (skein-amm 0.52.0: `at` a block's time or a step's, not monotonic): the window's hops are those whose
-    // EFFECTIVE time (fold.ts `effectiveAt`) is in [from, to) — the continuation of the `/pools/at` prefix above —
-    // applied oldest first by (effective time, place): each pool's own history order kept, the pools merged by time,
-    // and each bucketed at its effective time (the `at` handed to marketCandles).
-    const eff = f.effectiveAt();
-    const events: Rec[] = f.hops.filter((h) => eff.get(h)! >= from && eff.get(h)! < to)
-      .sort((x, y) => eff.get(x)! - eff.get(y)! || placeCmp(x.place, y.place))
-      .map((h) => ({ ...h.row, at: eff.get(h)! }));
-    return jsonAnswer(200, marketCandles(Array.isArray(at) ? at : [], events, tf), { "cache-control": CACHE });
   }
 
   /** The host-wide positions: each enabled token's `/positions?pool=` rows, each with its tokenId. */

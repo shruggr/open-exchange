@@ -509,7 +509,7 @@
       "get": {
         "operationId": "H7",
         "summary": "The pools at a time",
-        "description": "Every pool listed at `t` (ms): each pool's last deploy or Swap event at or before `t` (a pool whose last event then is a Close or Rescind, or with none yet, is not listed), in pool id order. Every listed pool, whatever its validator.",
+        "description": "Every pool listed at `t` (ms): each pool's events walked in event order up to its first event with `at > t`; the last of those, when a deploy or Swap, is the pool's state at `t` (a pool whose last event then is a Close or Rescind, or with none yet, is not listed), in pool id order. Every listed pool, whatever its validator.",
         "tags": [
           "history"
         ],
@@ -592,7 +592,7 @@
       "get": {
         "operationId": "H8",
         "summary": "The pool history",
-        "description": "The raw pool history rows with `from ≤ at < to` (both optional, ms), oldest first (by time, then pool id, then the pool's order); `pool` one pool's rows; `limit` 1 to 500 (default 500). Forward paging: `next` is the last row's cursor when more rows remain in the window (else null), passed back as `after`. `outpoint` is a pool output this index holds (`<txid>_<vout>` or `<txid>.<vout>`): the scan starts strictly after that record. An unknown outpoint is 404.",
+        "description": "The raw pool history rows with `from ≤ at < to` (both optional, ms), oldest first in event order (0.25.0: never re-sorted; `from`/`to` filter each row's own `at`); `pool` one pool's rows; `limit` 1 to 500 (default 500). Forward paging: `next` is the last row's cursor when more rows remain in the window (else null), passed back as `after`. `outpoint` is a pool output this index holds (`<txid>_<vout>` or `<txid>.<vout>`): the scan starts strictly after that record. An unknown outpoint is 404.",
         "tags": [
           "history"
         ],
@@ -1321,7 +1321,7 @@
       "get": {
         "operationId": "H1",
         "summary": "A token's trades",
-        "description": "The token's trade rows, newest first. `from ≤ at < to` (both optional, ms); `limit` 1 to 500 (default 100); `before` the cursor of the page before (`next`); `pool` one pool's rows (a position's history). `next` is the last row's cursor (hex of `at` (u64 BE) ‖ txid) when the page is full, else null. With `txid` instead: the one row, 404 when the transaction has none.",
+        "description": "The token's trade rows, newest first in event order (0.25.0: the order the instance recorded them, never re-sorted by `at`). `from ≤ at < to` (both optional, ms, each row's own `at`); `limit` 1 to 500 (default 100); `before` the cursor of the page before (`next`); `pool` one pool's rows (a position's history). `next` is the last row's event place (`<s>.<i>.<thread>`) when the page is full, else null; a cursor of an older format is refused 400. With `txid` instead: the one row, 404 when the transaction has none.",
         "tags": [
           "history"
         ],
@@ -1368,7 +1368,7 @@
             "name": "before",
             "in": "query",
             "required": false,
-            "description": "A page cursor (`next`).",
+            "description": "A page cursor (`next`): an event place `<s>.<i>.<thread>`.",
             "schema": {
               "type": "string"
             }
@@ -1487,7 +1487,7 @@
       "get": {
         "operationId": "H2",
         "summary": "A token's candles",
-        "description": "Candles over `from ≤ at < to`, oldest first, across all pools; computed on read. A window spanning more than 5000 buckets is refused. `series=fill` (or none): one candle per non-empty bucket of the trade rows (the instance's answer). `series=market` (the host's): the market price (`priceOf` over every listed pool, the planner's) — the pools entering the window (`/pools/at`), the window's pool events (`/pools/history`), the price after each event; a bucket exists when it holds an event: `o` the price entering its first event, `c` after its last, `h` / `l` over those (a moment with no pool has no price and is passed over), the volumes and `n` from its Swaps.",
+        "description": "Candles over `from ≤ at < to`, oldest first, across all pools. A window spanning more than 5000 buckets is refused. One candle per non-empty bucket of the trades, from the host's per-minute tallies (0.25.0), kept as each trade event arrives: within a minute open and close are the first and last trade to arrive; a bucket is its minutes in time order. 0.25.0: `series=market` is removed (400).",
         "tags": [
           "history"
         ],
@@ -1535,7 +1535,7 @@
             "name": "series",
             "in": "query",
             "required": false,
-            "description": "`fill` (default) or `market`.",
+            "description": "`fill` (the default and the only series).",
             "schema": {
               "type": "string"
             }
@@ -1600,14 +1600,14 @@
         },
         "x-route": "H2",
         "x-cache": "state",
-        "x-answered-by": "amm-p2p (the trade rows; `series=fill`) or the Open Exchange host (`series=market`, over the pool history)"
+        "x-answered-by": "the Open Exchange host (its minute tallies of the trade events)"
       }
     },
     "/@{token}/amm/stats": {
       "get": {
         "operationId": "H3",
         "summary": "A token's stats",
-        "description": "The token at the read's time, answered by the Open Exchange host: the instance's row (its last 24 h of trades, `lastTradePrice`) with the price, its two sides and the changes from the planner's `priceOf` over the pools `/@<token>/amm/pools` lists (validator beating, commission at or above the market minimum) and over the pools listed an hour and a day ago, and TVL and `pools` over the listed pools.",
+        "description": "The token at the read's time, answered by the Open Exchange host: the instance's row (its last 24 h of trades, from the host's minute tallies; `lastTradePrice` and `lastTradeAt` the last swap event, 0.25.0) with the price, its two sides and the changes from the planner's `priceOf` over the pools `/@<token>/amm/pools` lists (validator beating, commission at or above the market minimum) and over the pools listed an hour and a day ago, and TVL and `pools` over the listed pools.",
         "tags": [
           "history"
         ],
@@ -3311,7 +3311,7 @@
           },
           "at": {
             "type": "integer",
-            "description": "The hop's time. 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
+            "description": "The hop's time. 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards. 0.25.0: a label only; rows are ordered by event order, never by `at`."
           },
           "height": {
             "type": [
@@ -3359,7 +3359,7 @@
       },
       "Candle": {
         "type": "object",
-        "description": "One bucket: `t` its start (ms, a multiple of the resolution since the epoch), its open, high, low and close prices, each side's amounts summed and the trade count. Fill series: one per non-empty bucket of trades, the first, highest, lowest and last trade's prices. Market series (the host's): one per bucket holding a pool event, `o` the market price entering its first event, `c` after its last, `h` / `l` over those, the volumes and `n` from its Swaps.",
+        "description": "One bucket: `t` its start (ms, a multiple of the resolution since the epoch), its open, high, low and close prices, each side's amounts summed and the trade count. One per non-empty bucket of trades, the first, highest, lowest and last trade's prices (the first and last within a minute by arrival).",
         "properties": {
           "t": {
             "type": "integer"
@@ -3619,7 +3619,7 @@
           },
           "at": {
             "type": "integer",
-            "description": "That event's time (ms). 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
+            "description": "That event's time (ms). 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards. 0.25.0: a label only; rows are ordered by event order, never by `at`."
           },
           "swaps": {
             "type": "integer"

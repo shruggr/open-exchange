@@ -1,6 +1,7 @@
-// The lifetime counters (amm-lookup 0.47.0 `PoolCounters`, `TokenCounters`), summed from the fold's swaps on read.
+// The pool lifetime counters (amm-lookup 0.47.0 `PoolCounters`), summed from the fold's swaps on read. 0.25.0: the
+// token's (`TokenCounters`) are kept on the fold as each swap arrives (fold.ts `volumeSats`, `volumeTokens`, `trades`).
 import type { TokenFold } from "./fold.ts";
-import { priceOf, type Hop } from "./hop.ts";
+import type { Hop } from "./hop.ts";
 
 export interface PoolLifetime {
   satsIn: bigint; satsOut: bigint; tokensIn: bigint; tokensOut: bigint;
@@ -18,18 +19,6 @@ export function poolLifetime(f: TokenFold, poolId: string): PoolLifetime {
     p.lastTradeAt = p.lastTradeAt === null ? h.at : Math.max(p.lastTradeAt, h.at);
   }
   return p;
-}
-
-/** The token's counters: its volume on each side (each swap's price amounts) and its trade count. */
-export function tokenCounters(f: TokenFold): { volumeSats: bigint; volumeTokens: bigint; trades: number } {
-  let volumeSats = 0n, volumeTokens = 0n, trades = 0;
-  for (const h of f.hops) {
-    if (h.kind !== "swap") continue;
-    trades++;
-    const p = priceOf(h);
-    if (p) { volumeSats += p.sats; volumeTokens += p.tokens; }
-  }
-  return { volumeSats, volumeTokens, trades };
 }
 
 /** A pool's LP fees over its swaps (amm-lookup `sumSwaps` on `lp`): a buy's in sats, a sell's in tokens. */

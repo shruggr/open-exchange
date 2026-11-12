@@ -33,7 +33,7 @@
 //                          a pool, a sats-in and a token-in Swap, the LP's Close; the host's key is the fixtures'
 //                          validator identity, so B's pool is listed under a beating validator): the pool event feeds
 //                          /@<B>/amm/events and /amm/events send deploy, swap, swap, close (nothing on connect; A's
-//                          feed none); /@<B>/amm/pools/at, /pools/history (outpoint starts strictly after that output), /trades, /candles (fill and market), /stats
+//                          feed none); /@<B>/amm/pools/at, /pools/history (outpoint starts strictly after that output), /trades, /candles (fill; 0.25.0: market removed → 400), /stats
 //                          (price over the listed pools); the host's /amm/stats, /amm/positions?pool=, /amm/spends;
 //                          B's holders; then B's other lineage on a SECOND host (the fixtures' swap_token_change
 //                          competes with swap_tokens_in): deploy → sats-in swap → a swap WITH token change → its close
@@ -68,7 +68,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { DISCOVERY, SWAP } from "../../host/exchange.ts";
 import { load, OX_ROOT, skein, SWAP_APP_DIR, swapAppVersion } from "../../host/skein.ts";
 import { firstRun, main, settings, startExchange, type Env, type Running } from "../../host/cli.ts";
-import { changeBps, marketCandles, mergeStats, poolState } from "../../host/pools.ts";
+import { changeBps, mergeStats, poolState } from "../../host/pools.ts";
 import { commissionPkhFor } from "../../host/relay.ts";
 import { instanceStats } from "../../host/folds/stats.ts";
 import { TokenFold } from "../../host/folds/fold.ts";
@@ -625,15 +625,8 @@ try {
   check(!!cs && cs.length >= 1 && cs.reduce((k, c) => k + (c.n ?? 0), 0) === 2 && typeof cs[0]!.o?.sats === "number", `GET /@<B>/amm/candles?tf=1m (the fills, the instance's): ${cs?.length} non-empty bucket(s), 2 trades (${JSON.stringify(cs)?.slice(0, 160)})`);
   check(JSON.stringify(await getJson(`/@${B}/amm/candles?series=fill&${win}`)) === JSON.stringify(cs), "…?series=fill: the same answer");
   check((await get(`/@${B}/amm/candles?tf=1m&from=0&to=${now}`)).status === 400, "…a window over 5000 buckets: 400");
-  const mk = await getJson(`/@${B}/amm/candles?series=market&${win}`) as Array<Record<string, unknown>> | undefined;
-  const mkWant = marketCandles([], hist?.events ?? [], 60_000);
-  const firstMid = priceOf([poolState(eDeploy!)])!.mid;
-  const big = (v: unknown) => BigInt(v as number);
-  check(!!mk && mk.length >= 1 && mk.reduce((k, c) => k + Number(c.n), 0) === 2 && mk.length === mkWant.length
-    && big((mk[0]!.o as { sats: number }).sats) * firstMid.tokens === firstMid.sats * big((mk[0]!.o as { tokens: number }).tokens)
-    && mk.reduce((k, c) => k + Number(c.volumeSats), 0) === Number(mkWant.reduce((k, c) => k + c.volumeSats, 0n)),
-    `GET /@<B>/amm/candles?series=market (the host's): ${mk?.length} bucket(s), n 2, o = the price after the deploy (priceOf([deploy]).mid), the swaps' volumes (${JSON.stringify(mk)?.slice(0, 200)})`);
-  check((await get(`/@${B}/amm/candles?series=market&tf=2m&from=0&to=1`)).status === 400 && (await get(`/@${B}/amm/candles?series=market&tf=1m&from=0&to=${now}`)).status === 400, "…market: a bad tf 400; a window over 5000 buckets 400");
+  check((await get(`/@${B}/amm/candles?series=market&${win}`)).status === 400, "…?series=market: 400, an unknown series (0.25.0: the market series removed)");
+  check((await get(`/@${B}/amm/trades?before=${Buffer.from(`${now}:1.0.t`).toString("hex")}`)).status === 400, "…/trades: a cursor of the older format (hex) 400 (0.25.0: `before` is an event place)");
   const stB = await getJson(`/@${B}/amm/stats`) as Record<string, unknown> | undefined;
   check(stB?.tokenId === B && stB.buys24h === 1 && stB.sells24h === 1 && typeof stB.lastTradeAt === "number" && (stB.lastTradePrice as { sats?: number } | null)?.sats !== undefined && stB.pools === 0 && stB.price === null && stB.buyPrice === null && stB.sellPrice === null && stB.change24h === null, `GET /@<B>/amm/stats: closed, so no price; the last fill as lastTradePrice (${JSON.stringify(stB)})`);
   check(stB?.trades === 2 && typeof stB.volumeSats === "number" && stB.volumeSats > 0 && typeof stB.volumeTokens === "number" && stB.volumeTokens > 0, `…(0.19.0) the token's lifetime counters: trades 2, volumeSats ${String(stB?.volumeSats)}, volumeTokens ${String(stB?.volumeTokens)}`);
