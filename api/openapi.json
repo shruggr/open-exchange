@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Open Exchange public read API",
-    "version": "0.27.1",
+    "version": "0.27.2",
     "description": "Plain HTTP reads over the exchange's index: JSON unless the route says bytes; list parameters are comma-separated and answered one record per key in query order. Writes stay on the overlay protocol (`POST /submit`, BRC-22; `POST /lookup`, BRC-24) and on `/sendMessage` and `/call`; the host reads `/<app>/.live/<topic>` and `/<app>/.events` stay as they are. Cache classes: `state` = `Cache-Control: public, max-age=5`; `imm` = `public, max-age=31536000, immutable`, only for the bytes of a proven (mined) transaction, else `state`; `stream` = `text/event-stream`, no cache. `{token}` is a token id `<txid>_<vout>`; a token's routes are under its instance, `/@<token>/amm/…`. Each operation carries `x-cache` (its class) and `x-answered-by`."
   },
   "servers": [
@@ -279,6 +279,103 @@
           }
         },
         "x-route": "H5",
+        "x-cache": "state",
+        "x-answered-by": "the Open Exchange host"
+      }
+    },
+    "/amm/lp/fees": {
+      "get": {
+        "operationId": "H10",
+        "summary": "LP fees of pools over a period",
+        "description": "The LP fees of the named pools' swaps, summed by the host from its analytics store (any token it has rows for). A swap is placed in the period by its `at`: `from` ≤ at < `to`, each bound optional (absent: all time, echoed `null`). A swap's LP fee is its `feeLp`: in sats when it is a buy, in the pool's token when it is a sell. Amounts are exact decimal strings. `pools` counts the pools with at least one such swap and `byPool` lists them, in the query's order; `tokens` has one entry per token of those pools.",
+        "tags": [
+          "fees"
+        ],
+        "parameters": [
+          {
+            "name": "pool",
+            "in": "query",
+            "required": true,
+            "description": "Pool ids (`<txid>_<vout>`, the deploy outpoints), comma-separated.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "277f9d52c1a0e4b3d2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1ecbc_0"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "The period's start, ms since the epoch, inclusive.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 1793000000000
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "The period's end, ms since the epoch, exclusive.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 1793086400000
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LpFees"
+                },
+                "example": {
+                  "from": 1793000000000,
+                  "to": 1793086400000,
+                  "sats": "42",
+                  "tokens": [
+                    {
+                      "tokenId": "959bebef5c0a3e8a1f0c8c1a6c2b7d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c_0",
+                      "amount": "105"
+                    }
+                  ],
+                  "swaps": 3,
+                  "pools": 1,
+                  "byPool": [
+                    {
+                      "poolId": "277f9d52c1a0e4b3d2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1ecbc_0",
+                      "tokenId": "959bebef5c0a3e8a1f0c8c1a6c2b7d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c_0",
+                      "sats": "42",
+                      "tokens": "105",
+                      "swaps": 3
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "public, max-age=5"
+              }
+            }
+          },
+          "400": {
+            "description": "No `pool`, a pool id not `<txid>_<vout>`, or `from` / `to` not an integer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-route": "H10",
         "x-cache": "state",
         "x-answered-by": "the Open Exchange host"
       }
@@ -2353,7 +2450,7 @@
                   "openapi": "3.1.0",
                   "info": {
                     "title": "Open Exchange public read API",
-                    "version": "0.27.1"
+                    "version": "0.27.2"
                   },
                   "servers": [
                     {
@@ -3822,6 +3919,93 @@
           "identityKey": "030683a6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbcc",
           "minCommissionBps": 1
         }
+      },
+      "LpFees": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "to": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sats": {
+            "type": "string",
+            "description": "The buys' LP fees, sats (a decimal integer)."
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tokenId": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "string",
+                  "description": "The sells' LP fees in this token, base units (a decimal integer)."
+                }
+              },
+              "required": [
+                "tokenId",
+                "amount"
+              ]
+            }
+          },
+          "swaps": {
+            "type": "integer"
+          },
+          "pools": {
+            "type": "integer"
+          },
+          "byPool": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "poolId": {
+                  "type": "string"
+                },
+                "tokenId": {
+                  "type": "string"
+                },
+                "sats": {
+                  "type": "string",
+                  "description": "A decimal integer."
+                },
+                "tokens": {
+                  "type": "string",
+                  "description": "A decimal integer."
+                },
+                "swaps": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "poolId",
+                "tokenId",
+                "sats",
+                "tokens",
+                "swaps"
+              ]
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "sats",
+          "tokens",
+          "swaps",
+          "pools",
+          "byPool"
+        ]
       }
     }
   }

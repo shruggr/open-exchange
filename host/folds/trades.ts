@@ -5,8 +5,9 @@
 // 0.25.0 (David 2026-11-11: trades in EVENT order, never re-sorted by time): newest first = the fold's swaps read from
 // the last event back; `before` = an event place (`<s>.<i>.<thread>`, the rows strictly before it; an older cursor
 // is refused); `pool` and `from ≤ at < to` (each row's own `at`) filter that order.
-import type { TokenFold } from "./fold.ts";
-import { PLACE, placeCmp, type Hop } from "./hop.ts";
+// 2026-11-12: read from the analytics store (host/analytics.ts `trades`: ORDER BY s DESC, i DESC).
+import type { Analytics } from "../analytics.ts";
+import { PLACE, type Hop } from "./hop.ts";
 import type { Rec } from "../events.ts";
 
 export const MAX_TRADES = 500;
@@ -25,7 +26,7 @@ export function tradeRow(h: Hop, height: number | null): Rec {
 
 export type HeightOf = (txid: string) => Promise<number | null>;
 
-export async function trades(f: TokenFold, q: URLSearchParams, heightOf: HeightOf): Promise<{ trades: Rec[]; next: string | null }> {
+export async function trades(a: Analytics, tokenId: string, q: URLSearchParams, heightOf: HeightOf): Promise<{ trades: Rec[]; next: string | null }> {
   const int = (k: string) => { const v = q.get(k); if (v === null) return undefined; if (!/^\d+$/.test(v)) throw new BadQuery(`${k}: an integer`); return Number(v); };
   const from = int("from"), to = int("to");
   const limit = int("limit") ?? DEFAULT_TRADES;
@@ -34,13 +35,6 @@ export async function trades(f: TokenFold, q: URLSearchParams, heightOf: HeightO
   if (pool !== null && !/^[0-9a-f]{64}_\d+$/.test(pool)) throw new BadQuery("pool: <txid>_<vout>");
   const before = q.get("before");
   if (before !== null && !PLACE.test(before)) throw new BadQuery("before: an event place <s>.<i>.<thread> (a page's `next`)");
-  const rows: Hop[] = [];
-  for (let i = f.hops.length - 1; i >= 0 && rows.length < limit; i--) {
-    const h = f.hops[i]!;
-    if (h.kind !== "swap") continue;
-    if (before !== null && placeCmp(h.place, before) >= 0) continue;
-    if ((from !== undefined && h.at < from) || (to !== undefined && h.at >= to) || (pool !== null && h.poolId !== pool)) continue;
-    rows.push(h);
-  }
+  const rows = a.trades(tokenId, { limit, ...(before !== null ? { before } : {}), ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(pool !== null ? { pool } : {}) });
   return { trades: await Promise.all(rows.map(async (h) => tradeRow(h, await heightOf(h.txid)))), next: rows.length === limit ? rows[rows.length - 1]!.place : null };
 }

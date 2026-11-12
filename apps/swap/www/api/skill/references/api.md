@@ -40,7 +40,7 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/terms`,
 `/api/openapi.json`, `/api/`.
 
 <!-- generated: routes -->
-### 34 routes, 8 tags (OpenAPI document version 0.27.1)
+### 35 routes, 8 tags (OpenAPI document version 0.27.2)
 
 | tag | method | path | query (`*` required) | cache | summary |
 |---|---|---|---|---|---|
@@ -57,6 +57,7 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/terms`,
 | history | GET | `/@{token}/amm/candles` | tf*, from*, to*, series | state | A token's candles |
 | history | GET | `/@{token}/amm/stats` |  | state | A token's stats |
 | history | GET | `/@{token}/amm/color/{tokenId}/holders` | limit, skip | state | A token's holders |
+| fees | GET | `/amm/lp/fees` | pool*, from, to | state | LP fees of pools over a period |
 | fees | GET | `/@{token}/amm/positions` | pool* | state | Pool positions by pool id |
 | chain | GET | `/amm/spends` | outpoint* | state | Outpoint spends across tokens |
 | chain | GET | `/@{token}/amm/spends` | outpoint* | state | Outpoint spends |
