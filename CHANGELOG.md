@@ -16,8 +16,12 @@ release commits and tags (`git log`, `git tag -n`).
   (`from` ≤ at < `to`, both optional), a buy's `feeLp` in sats, a sell's in the pool's token:
   `{from, to, sats, tokens: [{tokenId, amount}], swaps, pools, byPool: [{poolId, tokenId, sats, tokens,
   swaps}]}`, amounts as decimal strings. In the OpenAPI document (H10) and the skill's route table.
-- The same change as 0.28.1, on 0.27.1 (skein-amm 0.54.1 pages, token app skein-amm v0.52.1, package on
-  @dcasegr/amm-engine 0.54.1); images, pages and dependencies unchanged; swap app 0.27.2.
+- The client call beside it: `@dcasegr/amm-client` 0.54.2's `lpFees(poolIds, {from?, to?})` (amounts as
+  bigints), in the skill. Package on @dcasegr/amm-engine 0.54.2 (engine code unchanged); the swap pages
+  rebuilt from skein-amm v0.54.2's web/ui (www.sh AMM_TAG v0.54.1 → v0.54.2); the skill, its examples and
+  wallet-headless.md on amm-engine / amm-client 0.54.2. The token image and host/pool-code.ts stay as
+  0.27.1 has them (token app skein-amm v0.52.1); swap app 0.27.2.
+- The same change as 0.28.1, on the 0.27 line.
 
 Upgrading from 0.27.1: npm install and restart; the first start builds analytics.sqlite from each
 instance's events. Published under the npm dist-tag `latest`; the 0.28 line is under `next`.

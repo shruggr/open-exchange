@@ -263,7 +263,7 @@ when its version differs, installed in place the same way. (0.21.0: no reindex â
 
 | image | installs |
 |---|---|
-| `swap` | skein-chain v0.12.1 (tarball), skein-signer v0.1.1 and skein-wallet v0.1.1 (tarballs), `../../apps/swap` (pages: skein-amm v0.54.1's web/ui); root's route `/` â†’ the pages; created owned by the host's key. Approvals at birth from the manifests: swap `calls {signer: "*", wallet: ["bsv"]}`, the signer app's service `signer` |
+| `swap` | skein-chain v0.12.1 (tarball), skein-signer v0.1.1 and skein-wallet v0.1.1 (tarballs), `../../apps/swap` (pages: skein-amm v0.54.2's web/ui); root's route `/` â†’ the pages; created owned by the host's key. Approvals at birth from the manifests: swap `calls {signer: "*", wallet: ["bsv"]}`, the signer app's service `signer` |
 | `token` | skein-chain v0.12.1, the signer app, the wallet app (as above), skein-amm v0.52.1 (tarball: the recognizers, `calls {signer: ["1/amm pool", "2/skein instance/self", "2/metanet handles envelope/anyone"], wallet: ["bsv", "tokens"]}`); root's `/submit`, `/lookup` |
 | `discovery` | skein-chain v0.12.1, skein-1color v0.20.1 (tarballs); root's `/submit`, `/lookup` |
 
@@ -272,7 +272,7 @@ when its version differs, installed in place the same way. (0.21.0: no reindex â
 ```
 zig build test                      # the swap program's tests
 zig build bin                       # apps/swap/bin/config.wasm (committed)
-scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.54.1's web/ui + the 1Color pages (skein-1color v0.14.0's www/) + api/ + the skill
+scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.54.2's web/ui + the 1Color pages (skein-1color v0.14.0's www/) + api/ + the skill
 scripts/www.sh api                  # apps/swap/www/api only: api/ + skills/open-exchange (its generated blocks rewritten first)
 npm install --no-save <dcasegr-skein-0.7.0.tgz> <dcasegr-amm-engine-0.49.0.tgz>   # from their `npm pack` until published
 npm run typecheck                   # host/ and scripts/ against node_modules/@dcasegr/skein

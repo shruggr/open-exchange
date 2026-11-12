@@ -48,7 +48,8 @@ const { trades } = await client.trades(t.tokenId, { limit: 20 });   // newest fi
 Other reads: `candles(id, {tf, from, to})` (the fill candles; `fill` is the only series, the host
 refuses `series: "market"` with 400 since open-exchange 0.25.0),
 `holders(id, {limit})`, `stats(id)`, `poolsAt(id, t)`, `poolHistory(id, …)`,
-`positionsAll(poolIds)`, `spendsAll(outpoints)`, `watchPoolEvents(id | "all", onEvent)`. The
+`positionsAll(poolIds)`, `lpFees(poolIds, {from?, to?})` (the host's `/amm/lp/fees`: the pools' LP fees
+over swaps with `from ≤ at < to`, amounts as bigints; amm-client 0.54.2), `spendsAll(outpoints)`, `watchPoolEvents(id | "all", onEvent)`. The
 event feeds are signals only (nothing replayed): on an event, re-read `tokenPools` and
 `statsAll({ids})`. Legs of one order share `payoutPkh` on trade rows: group by it. Trades come
 newest first in event order (never re-sorted by `at`); page with `next` as `before` (an event
@@ -233,8 +234,8 @@ before pinning.
 | package | version |
 |---|---|
 | `open-exchange` | 0.27.2 (this host) |
-| `@dcasegr/amm-engine` | 0.54.1 (the host's dependency) |
-| `@dcasegr/amm-client` | 0.54.1 (pin to the same version as the engine) |
+| `@dcasegr/amm-engine` | 0.54.2 (the host's dependency) |
+| `@dcasegr/amm-client` | 0.54.2 (pin to the same version as the engine) |
 <!-- /generated -->
 
 The wallet side, as the published client pins it (hand-maintained):
