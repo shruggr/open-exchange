@@ -3,6 +3,14 @@
 Released versions of open-exchange from 0.28.0. Earlier releases are described by their release commits
 and tags (`git log`, `git tag -n`).
 
+## Unreleased
+
+- The live-update streams (`GET <origin>/amm/events`, `GET /@<token>/amm/events`) send an SSE comment
+  (`: connected`) at once after the headers and a comment keep-alive (`: keep-alive`) every 15 s while the
+  connection is open; the timer is cleared when it closes. Behind a proxy that passes the headers on only with
+  the first body byte (a Cloudflare tunnel), a stream with no trading activity got no headers and was ended by
+  the proxy's 524 after ~100 s, without CORS headers. Event payloads are unchanged; EventSource ignores comments.
+
 ## 0.28.1 (npm tag `next`)
 
 - The host's analytics store: the swap data the host derives from each token instance's `amm/hop`
