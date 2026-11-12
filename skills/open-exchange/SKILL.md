@@ -219,8 +219,8 @@ before pinning.
 | package | version |
 |---|---|
 | `open-exchange` | 0.26.0 (this host) |
-| `@dcasegr/amm-engine` | 0.52.1 (the host's dependency) |
-| `@dcasegr/amm-client` | 0.52.1 (pin to the same version as the engine) |
+| `@dcasegr/amm-engine` | 0.53.0 (the host's dependency) |
+| `@dcasegr/amm-client` | 0.53.0 (pin to the same version as the engine) |
 <!-- /generated -->
 
 The wallet side, as the published client pins it (hand-maintained):

@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@dcasegr/skein": "0.9.1",
-    "@dcasegr/amm-engine": "0.52.1",
+    "@dcasegr/amm-engine": "0.53.0",
     "@bsv/sdk": "^2.8.6"
   },
   "devDependencies": {
