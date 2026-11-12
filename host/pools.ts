@@ -282,14 +282,28 @@ export class Pools {
     for (const s of this.everyFeed) s(chunk);
   }
 
-  /** A feed's answer: held open; the connection a subscriber in `set` until it closes. */
+  /**
+   * The feeds' keep-alive (ms): an SSE comment line sent this often on every open feed. 15 s, the common SSE
+   * practice (well inside a proxy's idle limit, e.g. Cloudflare's 100 s). EventSource ignores comment lines.
+   */
+  static KEEPALIVE_MS = 15_000;
+
+  /**
+   * A feed's answer: held open; the connection a subscriber in `set` until it closes. An SSE comment is sent at once
+   * (a proxy such as a Cloudflare tunnel passes the headers on only with the first body byte) and then every
+   * KEEPALIVE_MS; the timer is cleared when the connection closes or the host ends it.
+   */
   private feed(set: Set<Subscriber>): RouterResponse {
     return {
       status: 200, headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" }, body: new Uint8Array(),
       stream: (send, end) => {
+        send(": connected\n\n");
+        const beat = setInterval(() => send(": keep-alive\n\n"), Pools.KEEPALIVE_MS);
+        beat.unref();
+        const ended = () => { clearInterval(beat); end(); };
         set.add(send);
-        this.ends.add(end);
-        return () => { set.delete(send); this.ends.delete(end); };
+        this.ends.add(ended);
+        return () => { clearInterval(beat); set.delete(send); this.ends.delete(ended); };
       },
     };
   }
