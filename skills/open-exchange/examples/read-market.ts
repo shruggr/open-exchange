@@ -39,7 +39,7 @@ if (!tokenId) {
   const [pools, trades, candles, holders] = await Promise.all([
     client.tokenPools(tokenId), // what a swap may use now: market, pools, beating validators
     client.trades(tokenId, { limit: 5 }), // newest first; legs of one order share payoutPkh
-    client.candles(tokenId, { tf: "1h", from: now - 86_400_000, to: now, series: "market" }),
+    client.candles(tokenId, { tf: "1h", from: now - 86_400_000, to: now }), // fill candles: the only series
     client.holders(tokenId, { limit: 5 }),
   ]);
   show({

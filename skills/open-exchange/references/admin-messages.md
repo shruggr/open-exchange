@@ -25,10 +25,10 @@ Table from the open-exchange README. "Verified" = run this week through the clie
 | `enable {tokenId, beef?}` | `enableToken(id)` | row `enabled` under `amm/tokens`, the BEEF kept | `token-enabled {tokenId, beef, terms?, market?}` | creates or starts the instance (below) | yes |
 | `disable {tokenId}` | `disableToken(id)` | row `disabled` | `token-disabled` | stops the instance; never removes it | docs |
 | `price {sats \| null}` | `setEnablePrice(sats \| null)` | `{sats}` under `amm/enable-price` (read as `enablePriceSats` on `/amm/defaults`) | none | nothing | yes |
-| `withdraw` (no args) | `withdrawAll()`, then `settleWithdrawals()` | a BRC-29 payment to the sender, unsent, under `amm/withdrawals` | none | nothing broadcast: the admin's wallet takes it in | docs |
 
 Reads for the admin: `defaults()`, `tokenTerms(id)`, `validatorTerms(id)`, `discoveryState()`,
-`exchangeWallet()` (`GET /amm/wallet`: the paid enables' coins), `claimStatus()`, `isRoot(key)`.
+`exchangeBalance()` (read-only `{sats, outputs}`: what the paid enables paid in; there is no
+withdraw message), `claimStatus()`, `isRoot(key)`.
 
 ## Terms: two spellings
 

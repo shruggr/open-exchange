@@ -33,14 +33,14 @@ spec | jq '.paths | to_entries[] | select(.value.get.tags[0]=="history") | .key'
 ## Routes
 
 Exercised live through the client, the app or the headless harness (hand-maintained; the rest
-are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/pools/beef`, `/terms`,
+are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/terms`,
 `/amm/stats`, `/trades`, `/candles`, `/@{token}/amm/stats`, `/holders`, `/@{token}/amm/positions`,
 `/amm/spends`, `/tx`, the swap relay, `/amm/tokens`, `/@discovery/1color/tokens`, `/icon`,
 `/deploy`, `/.well-known/skein`, `/amm/admin`, `/amm/defaults`, `/amm/discovery`, the paid enable,
 `/api/openapi.json`, `/api/`.
 
 <!-- generated: routes -->
-### 39 routes, 8 tags (OpenAPI document version 0.18.1)
+### 34 routes, 8 tags (OpenAPI document version 0.26.0)
 
 | tag | method | path | query (`*` required) | cache | summary |
 |---|---|---|---|---|---|
@@ -48,7 +48,6 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/pools/bee
 | pools | GET | `/amm/events` |  | stream | Every enabled token's pool events |
 | pools | GET | `/@{token}/amm/pools` |  | state | A token's live pools and its market |
 | pools | GET | `/@{token}/amm/events` |  | stream | A token's pool events |
-| pools | GET | `/@{token}/amm/pools/beef` | pool | state | Current pools with one BEEF |
 | pools | GET | `/@{token}/amm/terms` |  | state | Validator and market terms |
 | history | GET | `/amm/stats` | ids | state | Every enabled token's stats |
 | history | GET | `/amm/positions` | pool* | state | Pool positions across tokens |
@@ -59,8 +58,6 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/pools/bee
 | history | GET | `/@{token}/amm/stats` |  | state | A token's stats |
 | history | GET | `/@{token}/amm/color/{tokenId}/holders` | limit, skip | state | A token's holders |
 | fees | GET | `/@{token}/amm/positions` | pool* | state | Pool positions by pool id |
-| fees | GET | `/@{token}/amm/fees/validator` | id* | state | Validator fees by identity key |
-| fees | GET | `/@{token}/amm/fees/commission` | pkh* | state | Commissions by pkh |
 | chain | GET | `/amm/spends` | outpoint* | state | Outpoint spends across tokens |
 | chain | GET | `/@{token}/amm/spends` | outpoint* | state | Outpoint spends |
 | chain | GET | `/@{token}/amm/tx` | id* | imm (proven) / state | A transaction's BEEF |
@@ -77,19 +74,22 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/pools/bee
 | host | GET | `/amm/defaults` |  | none (no Cache-Control header) | Defaults for new token instances |
 | host | GET | `/amm/discovery` |  | none (no Cache-Control header) | Discovery on or off |
 | host | POST | `/amm/enable` | tokenId*, paymentTxid*, paymentVout*, derivationPrefix*, derivationSuffix* | none | Enable a token for a fee (a BEEF submission) |
-| host | GET | `/amm/wallet` |  | none (no Cache-Control header) | The exchange's wallet |
-| host | GET | `/amm/wallet/tx` | n* | none (no Cache-Control header) | A withdrawal's transaction |
 | docs | GET | `/api/openapi.json` |  | as the swap pages are served | This document |
 | docs | GET | `/api/` |  | as the swap pages are served | The reference page |
 | docs | GET | `/api/skill.md` |  | as the swap pages are served | The agent skill |
 | docs | GET | `/api/llms.txt` |  | as the swap pages are served | llms.txt |
 <!-- /generated -->
 
+A pool's transaction is `/@{token}/amm/tx?id=<txid of its current outpoint>` (`/pools/beef` is
+gone since open-exchange 0.19.0). Candles have one series, `fill` (`series=market` answers 400
+since 0.25.0). The trades cursor `next` / `before` is an event place `<s>.<i>.<thread>`; rows
+come in event order, and `at` is the block's time when the transaction was mined on arrival.
+
 ## Answer shapes worth knowing
 
 ```jsonc
 // GET /@<token>/amm/pools  (illustrative values)
-{ "market": { "commissionPkh": "<hash160 hex>", "minCommissionBps": 0 },
+{ "market": { "identityKey": "<pubkey>", "minCommissionBps": 0 },
   "validators": [{ "identity": "<pubkey>", "peerId": "16Uiu2...", "minLegSats": 100000 }],
   "pools": [{ "poolId": "<deploy txid>_0", "outpoint": "<current txid>_0", "lpPubKey": "...",
               "bsvReserve": 104207588, "tokenReserve": 479811567, "liquidityFeeBps": 35,
@@ -108,7 +108,17 @@ exchange's key (`commission_missing` otherwise); everything else is the validato
 `{ok: true, tx, txid, beef?}` / `{ok: false, reason, detail?, pool?, beef?}` /
 `{ok: false, reason: "unreachable", detail}`. The client's request close is the only timer
 (`LEG_PATIENCE_MS` = 15 s). From open-exchange 0.18.0: transactions the token's topic
-already admitted go by txid alone in the BEEF; an unknown txid-only entry is `submit_refused`.
+already admitted go by txid alone in the BEEF; a txid-only entry the validator does not hold is
+`bad_transaction` (`UnknownTxidOnly: …`), nothing signed.
+
+What the validator answers (skein-amm 0.51.0, one step per request, nothing waits: no `pending`):
+the first leg on a pool is signed and handed to its overlay; each later one is `pool_spent` at
+once, with the pool's newest state (`pool`) and its transaction (`beef`). After signing:
+`submit_refused` (the overlay refused it, e.g. `InputSpent: …`), `topic_refused`, `rejected` (the
+network's reason). From open-exchange 0.23.0 an accepted leg is answered only when this host's
+broadcast of it is taken by the broadcaster (Arcade); refused there, the answer is
+`{ok: false, reason: "rejected", detail: <the broadcaster's reason>}`. `missing_signature` and
+`bad_signature` are gone (skein-amm 0.50.1).
 
 ## Overlay writes (verified)
 

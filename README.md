@@ -37,8 +37,8 @@ The read API's routes, plain GETs, and the pool event feeds (0.14.0: every pool 
 | `/@<token>/amm/stats` | the host's (0.19.0: with the instance's lifetime `volumeSats`, `volumeTokens`, `trades`; 0.20.0: the instance's row is the last fill, the volumes and the counts only, the rest the host's, the fields as before): `price` = the planner's `priceOf` over the pools `/@<token>/amm/pools` lists (the midpoint of what a buy and a sell of 1% of the pooled sats would pay now), `buyPrice`, `sellPrice`; `change1h` / `change24h` from the same price over the pools listed then (`/pools/at`); `lastTradePrice` and last trade = the last swap event, 24 h volume and counts (from the minute tallies); TVL and pools over the listed pools |
 | `/@<token>/amm/color/<token>/holders` (`?limit&skip`) | the holder count and the balances, largest first; 0.19.0 (skein-1color 0.17.0): `supply`, `authorities`, `burned`, `burns` beside them |
 | `/@<token>/amm/positions?pool=` | by pool id (0.14.0); 0.19.0: `/pools/beef` is gone — a pool's transaction is `/tx?id=` of its current outpoint's txid |
-| `/@<token>/amm/fees/validator`, `/fees/commission`, `/terms` (the validator's `minLegSats`), `/spends`, `/tx`, `/token` | as before (0.11.0; 0.17.0: no swap records, so no swap read; 0.17.1: `/tx` carried every input's source transaction; 0.17.2: reverted, `/tx` as 0.17.0; 0.19.0: `/spends` answers `{outpoint, spentBy?}`, one lookup, no pool following) |
-| `POST /@<token>/amm/swap` (0.17.0) | the swap relay, the HOST's: body `{funding, swap, pool, validator, peerId}` (DAG-JSON bytes) → the validator's reply as it is (`{ok: true, tx, txid, beef?}` / `{ok: false, reason, detail?, pool?, beef?}`), or `{ok: false, reason: "commission_missing"}` (the one rule the host checks: the commission pays this exchange's key) or `{ok: false, reason: "unreachable", detail}` (any break in the call); 0.23.0: a reply carrying the signed swap (`tx`) is answered when THIS host's broadcast of it is taken by Arcade (a relayed reply's BEEF taken into the token instance first, which this host then broadcasts; on the validator's own host skein holds the frame's answer the same way), and `{ok: false, reason: "rejected", detail: <Arcade's reason>}` if Arcade refuses it as invalid; a refusal (no `tx`) at once; plain; nothing recorded; the request's close stops the host (host/relay.ts) |
+| `/@<token>/amm/terms` (the validator's terms with its `minLegSats`; the market's `identityKey` and `minCommissionBps`), `/spends`, `/tx`, `/token` | as before (0.21.0, skein-amm 0.49.0: `/fees/validator` and `/fees/commission` are gone, and `/terms`' market names its `identityKey` in place of a `commissionPkh`; 0.11.0; 0.17.0: no swap records, so no swap read; 0.17.1: `/tx` carried every input's source transaction; 0.17.2: reverted, `/tx` as 0.17.0; 0.19.0: `/spends` answers `{outpoint, spentBy?}`, one lookup, no pool following) |
+| `POST /@<token>/amm/swap` (0.17.0) | the swap relay, the HOST's: body `{funding, swap, pool, validator, peerId}` (DAG-JSON bytes) → the validator's reply as it is (`{ok: true, tx, txid, beef?}` / `{ok: false, reason, detail?, pool?, beef?}`), or `{ok: false, reason: "commission_missing"}` (the one rule the host checks: the commission pays this exchange's key) or `{ok: false, reason: "unreachable", detail}` (any break in the call); 0.23.0: a reply carrying the signed swap (`tx`) is answered when THIS host's broadcast of it is taken by Arcade (a relayed reply's BEEF taken into the token instance first, which this host then broadcasts; on the validator's own host skein holds the frame's answer the same way), and `{ok: false, reason: "rejected", detail: <Arcade's reason>}` if Arcade refuses it as invalid; a refusal (no `tx`) at once. The validator (skein-amm 0.51.0) takes a request in one step, nothing waits (no `pending`): a second request on the same pool is `pool_spent` at once, with the newest state and its BEEF; a BEEF the door's verifier refuses, or a pool script that fails on the signed transaction, is `bad_transaction` with the verifier's error; after signing, `submit_refused`, `topic_refused` or `rejected` (the network's reason); `missing_signature` and `bad_signature` are gone (skein-amm 0.50.1); plain; nothing recorded; the request's close stops the host (host/relay.ts) |
 | `/amm/tokens`, `/@discovery/1color/tokens` (rows with `amount` and `height`), `/<token>`, `/<token>/icon`, `/<token>/deploy` | as before |
 | `/@discovery/1color/tokens?q=<text>&after=<tokenId>&limit=` (0.15.1) | search: the tokens whose `sym` starts with `q` (ASCII case-insensitive) or whose `tokenId` starts with it, the same rows and order; `after` = the rows strictly after that token (the last row's id; the answer stays the plain array); an unknown `after`, `after` beside `skip`, `q`/`after` beside `ids` → 400; tokens deployed before 0.15.1 are found by id only until their deploy is admitted again |
 
@@ -206,15 +206,15 @@ method for each, and the Settings page does the same from Yours.
    wallet wins; `GET /amm/admin` names it.
 2. **Default terms**: `setDefaultTerms({lpBps, validatorBps, commissionBps, minLegSats})`
    (`{fn: "defaults", args: {terms}}`). Until terms exist a token instance is a market only:
-   `/@<token>/amm/terms` answers `validator: null`, `validatorTerms()` is `NO_VALIDATOR`, and
-   `deployPosition` is refused. A token enabled before the defaults were set needs its own
+   `/@<token>/amm/terms` answers `validator: null`, `validatorTerms()` answers `{none: true}`
+   (`hasTerms` false), and `deployPosition` is refused. A token enabled before the defaults were set needs its own
    `setTokenTerms(tokenId, terms)` (`{fn: "terms"}`); the defaults apply to later enables.
    The client's input names are `lpBps` / `validatorBps` / `commissionBps`; the wire and the
    reads say `lpFeeBps` / `validatorFeeBps` / `commissionBps`.
 3. **Discovery on**: `setDiscovery(true)` (`{fn: "discovery", args: {on: true}}`). A 1Color
    deploy is submitted to `tm_color` at this origin, which is the discovery instance; off, the
    deploy is refused and `/@discovery/1color/tokens` knows nothing.
-4. **Enable** the token: the admin's free `enableToken(tokenId)` (`{fn: "enable"}`; the host finds
+4. **Enable** the token: the admin's free `enableToken(tokenId)` (`{fn: "enable"}`; the client finds
    the deploy's BEEF in the admin's wallet or on discovery), or anyone's paid `enableTokenPaid`
    once a price is set with `setEnablePrice(sats)`. `GET /amm/tokens` then lists it and
    `/@<token>/amm/pools` shows the host's validator beating.
@@ -267,7 +267,7 @@ when its version differs, installed in place the same way. (0.21.0: no reindex �
 ```
 zig build test                      # the swap program's tests
 zig build bin                       # apps/swap/bin/config.wasm (committed)
-scripts/www.sh                      # apps/swap/www (committed): skein-amm 0.49.0's web/ui + the 1Color pages (skein-1color v0.14.0's www/) + api/ + the skill
+scripts/www.sh                      # apps/swap/www (committed): skein-amm v0.52.0's web/ui + the 1Color pages (skein-1color v0.14.0's www/) + api/ + the skill
 scripts/www.sh api                  # apps/swap/www/api only: api/ + skills/open-exchange (its generated blocks rewritten first)
 npm install --no-save <dcasegr-skein-0.7.0.tgz> <dcasegr-amm-engine-0.49.0.tgz>   # from their `npm pack` until published
 npm run typecheck                   # host/ and scripts/ against node_modules/@dcasegr/skein

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Open Exchange public read API",
-    "version": "0.22.0",
+    "version": "0.26.0",
     "description": "Plain HTTP reads over the exchange's index: JSON unless the route says bytes; list parameters are comma-separated and answered one record per key in query order. Writes stay on the overlay protocol (`POST /submit`, BRC-22; `POST /lookup`, BRC-24) and on `/sendMessage` and `/call`; the host reads `/<app>/.live/<topic>` and `/<app>/.events` stay as they are. Cache classes: `state` = `Cache-Control: public, max-age=5`; `imm` = `public, max-age=31536000, immutable`, only for the bytes of a proven (mined) transaction, else `state`; `stream` = `text/event-stream`, no cache. `{token}` is a token id `<txid>_<vout>`; a token's routes are under its instance, `/@<token>/amm/…`. Each operation carries `x-cache` (its class) and `x-answered-by`."
   },
   "servers": [
@@ -18,28 +18,36 @@
   ],
   "tags": [
     {
-      "name": "pools"
+      "name": "pools",
+      "description": "A token's live pools, its validator and market terms, and the pool event feeds."
     },
     {
-      "name": "history"
+      "name": "history",
+      "description": "Trades, candles, stats, positions, holders and the pools over time."
     },
     {
-      "name": "fees"
+      "name": "fees",
+      "description": "Pool positions: what each pool's LP has earned."
     },
     {
-      "name": "chain"
+      "name": "chain",
+      "description": "Outpoint spends and transaction BEEFs from the chain state."
     },
     {
-      "name": "swaps"
+      "name": "swaps",
+      "description": "A swap leg, relayed by the host to its validator."
     },
     {
-      "name": "tokens"
+      "name": "tokens",
+      "description": "The instance's token, the exchange's token list and discovery's 1Color listings."
     },
     {
-      "name": "host"
+      "name": "host",
+      "description": "The instance card, the claimant, defaults, discovery and the paid enable."
     },
     {
-      "name": "docs"
+      "name": "docs",
+      "description": "This document and the reference page rendered from it."
     }
   ],
   "paths": {
@@ -509,7 +517,7 @@
       "get": {
         "operationId": "H7",
         "summary": "The pools at a time",
-        "description": "Every pool listed at `t` (ms): each pool's last deploy or Swap event at or before `t` (a pool whose last event then is a Close or Rescind, or with none yet, is not listed), in pool id order. Every listed pool, whatever its validator.",
+        "description": "Every pool listed at `t` (ms): each pool's events walked in event order up to its first event with `at > t`; the last of those, when a deploy or Swap, is the pool's state at `t` (a pool whose last event then is a Close or Rescind, or with none yet, is not listed), in pool id order. Every listed pool, whatever its validator.",
         "tags": [
           "history"
         ],
@@ -592,7 +600,7 @@
       "get": {
         "operationId": "H8",
         "summary": "The pool history",
-        "description": "The raw pool history rows with `from ≤ at < to` (both optional, ms), oldest first (by time, then pool id, then the pool's order); `pool` one pool's rows; `limit` 1 to 500 (default 500). Forward paging: `next` is the last row's cursor when more rows remain in the window (else null), passed back as `after`. `outpoint` is a pool output this index holds (`<txid>_<vout>` or `<txid>.<vout>`): the scan starts strictly after that record. An unknown outpoint is 404.",
+        "description": "The raw pool history rows with `from ≤ at < to` (both optional, ms), oldest first in event order (0.25.0: never re-sorted; `from`/`to` filter each row's own `at`); `pool` one pool's rows; `limit` 1 to 500 (default 500). Forward paging: `next` is the last row's cursor when more rows remain in the window (else null), passed back as `after`. `outpoint` is a pool output this index holds (`<txid>_<vout>` or `<txid>.<vout>`): the scan starts strictly after that record. An unknown outpoint is 404.",
         "tags": [
           "history"
         ],
@@ -856,164 +864,11 @@
         "x-answered-by": "amm-p2p via the pool lookup's `{poolIds}`"
       }
     },
-    "/@{token}/amm/fees/validator": {
-      "get": {
-        "operationId": "P5",
-        "summary": "Validator fees by identity key",
-        "description": "One record per validator identity key in query order: the validator fees over all its pools of this token (closed included); `pools` the distinct pools counted.",
-        "tags": [
-          "fees"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "required": true,
-            "description": "Validator identity keys, comma-separated.",
-            "schema": {
-              "type": "string"
-            },
-            "example": "030683a6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbcc"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ValidatorFees"
-                  }
-                },
-                "example": [
-                  {
-                    "validatorIdentityKey": "030683a6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbcc",
-                    "sats": 210,
-                    "tokens": 50000,
-                    "swaps": 9,
-                    "pools": 2
-                  }
-                ]
-              }
-            },
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "example": "public, max-age=5"
-              }
-            }
-          },
-          "400": {
-            "description": "`id` missing, or a key that is not hex of its length.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No token yet.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "x-route": "P5",
-        "x-cache": "state",
-        "x-answered-by": "amm-p2p via `{validatorIdentityKeys}`"
-      }
-    },
-    "/@{token}/amm/fees/commission": {
-      "get": {
-        "operationId": "P6",
-        "summary": "Commissions by pkh",
-        "description": "One record per commission pkh in query order: the commissions the swaps naming it paid.",
-        "tags": [
-          "fees"
-        ],
-        "parameters": [
-          {
-            "name": "pkh",
-            "in": "query",
-            "required": true,
-            "description": "Commission public key hashes, comma-separated (20 bytes hex each).",
-            "schema": {
-              "type": "string"
-            },
-            "example": "5f2c9d0a1b3e4f5061728394a5b6c7d8e9f00112"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/CommissionFees"
-                  }
-                },
-                "example": [
-                  {
-                    "commissionPkh": "5f2c9d0a1b3e4f5061728394a5b6c7d8e9f00112",
-                    "sats": 75,
-                    "tokens": 0,
-                    "swaps": 3
-                  }
-                ]
-              }
-            },
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "example": "public, max-age=5"
-              }
-            }
-          },
-          "400": {
-            "description": "`pkh` missing, or a hash that is not hex of its length.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No token yet.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "x-route": "P6",
-        "x-cache": "state",
-        "x-answered-by": "amm-p2p via `{commissionPkhs}`"
-      }
-    },
     "/@{token}/amm/terms": {
       "get": {
         "operationId": "P7",
         "summary": "Validator and market terms",
-        "description": "The instance's validator terms (null: a market only) and its market, unsigned: `amm.pool.terms` and `amm.swap.terms` in one. 0.14.0: the validator's `minLegSats` (0 = none).",
+        "description": "The instance's validator terms (null: a market only) and its market, unsigned: `amm.pool.terms` and `amm.swap.terms` in one. 0.14.0: the validator's `minLegSats` (0 = none). 0.21.0 (skein-amm 0.49.0): the market names its `identityKey` (each swap's commission key derives from it, keyed by the pool outpoint the swap spends) in place of a fixed `commissionPkh`.",
         "tags": [
           "pools"
         ],
@@ -1044,10 +899,11 @@
                     "peerId": "16Uiu2HAmVaxF2exampleexampleexampleexampleexampleg1bo",
                     "lpFeeBps": 35,
                     "validatorFeeBps": 10,
-                    "commissionBps": 5
+                    "commissionBps": 5,
+                    "minLegSats": 100000
                   },
                   "market": {
-                    "commissionPkh": "5f2c9d0a1b3e4f5061728394a5b6c7d8e9f00112",
+                    "identityKey": "030683a6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbcc",
                     "minCommissionBps": 1
                   }
                 }
@@ -1185,6 +1041,9 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "want ?id=<txid>: 64 hex characters"
                 }
               }
             }
@@ -1195,6 +1054,9 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "unknown transaction"
                 }
               }
             }
@@ -1209,7 +1071,7 @@
       "post": {
         "operationId": "S1",
         "summary": "Relay a swap leg to its validator (the host is the relay)",
-        "description": "The open-exchange host relays one swap leg (0.17.0, skein-amm 0.44.0: the instance logs facts, never attempts; nothing about the attempt is recorded). Plain (no BRC-104 session, as /submit). The host checks ONE rule, the exchange's commission: when the pool's CommissionBps > 0 the Swap call's commissionPkh must be hash160 of the token instance's key for [1, \"amm commission\"], key id the pool outpoint the swap spends (`<txid>_<vout>` of the swap's input 0: a fresh key per swap, 0.21.0), counterparty anyone (derivable from the market's `identityKey` on /pools); a swap that fails it is answered `commission_missing` and nothing is relayed. Everything else is the validator's. The host signs the validator's package with the token instance's key, carries it on one libp2p stream (one request frame, one answer frame) to `peerId` — or, when `peerId` is this host's own node, hands it in as that node's inbound frame — submits a `beef` the reply carries to the token instance's overlay (another node's) and answers the validator's reply as it is. 0.23.0: a reply carrying the signed swap (`tx`) is answered only once THIS host's broadcast of that transaction is taken by Arcade (on the validator's own host, skein holds the frame's answer the same way); if Arcade refuses it as invalid the answer is `{ok: false, reason: \"rejected\", detail: <Arcade's reason>}`. A refusal (no `tx`) is answered at once. Any break in the call (dial refused, protocol not served, write failed, stream closed without an answer) is answered `unreachable` at once. The client's request is the only timer: when it closes the host stops (a dial in progress cancelled, a request not yet written never written, an open stream closed); once written, the validator answers on its stream and a signed swap reaches the overlay regardless. No retries, no record, no status read. THE BEEF RULE (0.18.0, skein 0.3.3 / skein-amm 0.45.0): a transaction the token's topic admitted (the pool output's transaction, a swap whose change or payout the taker spends) goes by txid alone (a BEEF V2 txid-only entry) — the validator's instance holds it, and skein 0.3.3's door admits a txid-only entry for a transaction the instance holds; every other transaction (the taker's own funding) raw with its ancestry back to proven (its BUMPs). A request the door would refuse (0.18.2, skein-amm 0.46.2) — a txid-only entry the validator's instance does not hold, a source neither in the BEEF nor held, a script that fails — is refused by the validator before its pool lock and its signature: `{ok: false, reason: \"bad_transaction\", detail: \"<the verifier's error>: <its meaning> (<txid or input>)\"}`, e.g. `UnknownTxidOnly: … (<txid>)`; nothing signed, nothing recorded, the pool not held.",
+        "description": "The open-exchange host relays one swap leg (0.17.0, skein-amm 0.44.0: the instance logs facts, never attempts; nothing about the attempt is recorded). Plain (no BRC-104 session, as /submit). The host checks ONE rule, the exchange's commission: when the pool's CommissionBps > 0 the Swap call's commissionPkh must be hash160 of the token instance's key for [1, \"amm commission\"], key id the pool outpoint the swap spends (`<txid>_<vout>` of the swap's input 0: a fresh key per swap, 0.21.0), counterparty anyone (derivable from the market's `identityKey` on /pools); a swap that fails it is answered `commission_missing` and nothing is relayed. Everything else is the validator's. The host signs the validator's package with the token instance's key, carries it on one libp2p stream (one request frame, one answer frame) to `peerId` — or, when `peerId` is this host's own node, hands it in as that node's inbound frame — submits a `beef` the reply carries to the token instance's overlay (another node's) and answers the validator's reply as it is. 0.23.0: a reply carrying the signed swap (`tx`) is answered only once THIS host's broadcast of that transaction is taken by the broadcaster (Arcade; on the validator's own host, skein holds the frame's answer the same way); if the broadcaster refuses it as invalid the answer is `{ok: false, reason: \"rejected\", detail: <the broadcaster's reason>}`. A refusal (no `tx`) is answered at once. Any break in the call (dial refused, protocol not served, write failed, stream closed without an answer) is answered `unreachable` at once. The client's request is the only timer: when it closes the host stops (a dial in progress cancelled, a request not yet written never written, an open stream closed); once written, the validator answers on its stream and a signed swap reaches the overlay regardless. No retries, no record, no status read. THE BEEF RULE (0.18.0, skein 0.3.3 / skein-amm 0.45.0): a transaction the token's topic admitted (the pool output's transaction, a swap whose change or payout the taker spends) goes by txid alone (a BEEF V2 txid-only entry) — the validator's instance holds it, and skein 0.3.3's door admits a txid-only entry for a transaction the instance holds; every other transaction (the taker's own funding) raw with its ancestry back to proven (its BUMPs). THE VALIDATOR'S ANSWER (skein-amm 0.51.0): a request is taken in one step — checked, signed, handed to the validator's own overlay and answered with the overlay's verdict; nothing waits (no pool lock, no `pending`, no ask-again). Requests for one pool are taken in arrival order: the first is signed, each later one is answered `pool_spent` at once with the pool's newest state (`pool`) and its transaction (`beef`). The request's BEEF is checked first with the door's verifier and the validator's held set, and the pool input's script is run again on the signed transaction: either failing is `{ok: false, reason: \"bad_transaction\", detail: \"<the verifier's error>: <its meaning> (<txid or input>)\"}` (e.g. `UnknownTxidOnly: … (<txid>)` for a txid-only entry the validator's instance does not hold, `ScriptFailed: …`), nothing signed. After signing: `submit_refused` (the overlay refused the signed BEEF, or an input another held transaction already spends, `InputSpent: …`), `topic_refused` (the token's topic did not admit it), `rejected` (the network rejected it, detail the reason), `submit_failed` (no outcome). Other refusals are the validator's checks (`below_minimum`, `not_validating`, `bad_outputs`, `fees_unacceptable`, …); the reasons `missing_signature` and `bad_signature` are gone (skein-amm 0.50.1).",
         "tags": [
           "host",
           "swaps"
@@ -1237,7 +1099,7 @@
         },
         "responses": {
           "200": {
-            "description": "The validator's reply as it is (a signed swap once this host's broadcast of it is taken by Arcade), or the host's own refusal (`commission_missing`), break (`unreachable`) or Arcade's refusal (`rejected`, 0.23.0)",
+            "description": "The validator's reply as it is (a signed swap once this host's broadcast of it is taken by the broadcaster), its refusal (`pool_spent`, `bad_transaction`, `submit_refused`, `rejected`, …), or the host's own refusal (`commission_missing`), break (`unreachable`) or the broadcaster's refusal (`rejected`, 0.23.0)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1268,6 +1130,11 @@
                         "outpoint": "9fd0000000000000000000000000000000000000000000000000000000000000_0",
                         "bsvReserve": 1000995,
                         "tokenReserve": 99900000
+                      },
+                      "beef": {
+                        "/": {
+                          "bytes": "..."
+                        }
                       }
                     }
                   },
@@ -1283,6 +1150,20 @@
                       "ok": false,
                       "reason": "unreachable",
                       "detail": "the dial was refused: …"
+                    }
+                  },
+                  "bad_transaction": {
+                    "value": {
+                      "ok": false,
+                      "reason": "bad_transaction",
+                      "detail": "UnknownTxidOnly: … (9fd0000000000000000000000000000000000000000000000000000000000000)"
+                    }
+                  },
+                  "rejected": {
+                    "value": {
+                      "ok": false,
+                      "reason": "rejected",
+                      "detail": "<the broadcaster's reason>"
                     }
                   }
                 }
@@ -1321,7 +1202,7 @@
       "get": {
         "operationId": "H1",
         "summary": "A token's trades",
-        "description": "The token's trade rows, newest first. `from ≤ at < to` (both optional, ms); `limit` 1 to 500 (default 100); `before` the cursor of the page before (`next`); `pool` one pool's rows (a position's history). `next` is the last row's cursor (hex of `at` (u64 BE) ‖ txid) when the page is full, else null. With `txid` instead: the one row, 404 when the transaction has none.",
+        "description": "The token's trade rows, newest first in event order (0.25.0: the order the instance recorded them, never re-sorted by `at`). `from ≤ at < to` (both optional, ms, each row's own `at`); `limit` 1 to 500 (default 100); `before` the cursor of the page before (`next`); `pool` one pool's rows (a position's history). `next` is the last row's event place (`<s>.<i>.<thread>`) when the page is full, else null; a cursor of an older format is refused 400. With `txid` instead: the one row, 404 when the transaction has none.",
         "tags": [
           "history"
         ],
@@ -1368,7 +1249,7 @@
             "name": "before",
             "in": "query",
             "required": false,
-            "description": "A page cursor (`next`).",
+            "description": "A page cursor (`next`): an event place `<s>.<i>.<thread>`.",
             "schema": {
               "type": "string"
             }
@@ -1487,7 +1368,7 @@
       "get": {
         "operationId": "H2",
         "summary": "A token's candles",
-        "description": "Candles over `from ≤ at < to`, oldest first, across all pools; computed on read. A window spanning more than 5000 buckets is refused. `series=fill` (or none): one candle per non-empty bucket of the trade rows (the instance's answer). `series=market` (the host's): the market price (`priceOf` over every listed pool, the planner's) — the pools entering the window (`/pools/at`), the window's pool events (`/pools/history`), the price after each event; a bucket exists when it holds an event: `o` the price entering its first event, `c` after its last, `h` / `l` over those (a moment with no pool has no price and is passed over), the volumes and `n` from its Swaps.",
+        "description": "Candles over `from ≤ at < to`, oldest first, across all pools. A window spanning more than 5000 buckets is refused. One candle per non-empty bucket of the trades, from the host's per-minute tallies (0.25.0), kept as each trade event arrives: within a minute open and close are the first and last trade to arrive; a bucket is its minutes in time order. 0.25.0: `series=market` is removed (400).",
         "tags": [
           "history"
         ],
@@ -1535,7 +1416,7 @@
             "name": "series",
             "in": "query",
             "required": false,
-            "description": "`fill` (default) or `market`.",
+            "description": "`fill` (the default and the only series).",
             "schema": {
               "type": "string"
             }
@@ -1600,14 +1481,14 @@
         },
         "x-route": "H2",
         "x-cache": "state",
-        "x-answered-by": "amm-p2p (the trade rows; `series=fill`) or the Open Exchange host (`series=market`, over the pool history)"
+        "x-answered-by": "the Open Exchange host (its minute tallies of the trade events)"
       }
     },
     "/@{token}/amm/stats": {
       "get": {
         "operationId": "H3",
         "summary": "A token's stats",
-        "description": "The token at the read's time, answered by the Open Exchange host: the instance's row (its last 24 h of trades, `lastTradePrice`) with the price, its two sides and the changes from the planner's `priceOf` over the pools `/@<token>/amm/pools` lists (validator beating, commission at or above the market minimum) and over the pools listed an hour and a day ago, and TVL and `pools` over the listed pools.",
+        "description": "The token at the read's time, answered by the Open Exchange host: the instance's row (its last 24 h of trades, from the host's minute tallies; `lastTradePrice` and `lastTradeAt` the last swap event, 0.25.0) with the price, its two sides and the changes from the planner's `priceOf` over the pools `/@<token>/amm/pools` lists (validator beating, commission at or above the market minimum) and over the pools listed an hour and a day ago, and TVL and `pools` over the listed pools.",
         "tags": [
           "history"
         ],
@@ -1962,7 +1843,9 @@
                     "dec": 5,
                     "iconUrl": "959bebef5c0a3e8a1f0c8c1a6c2b7d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c_0/icon",
                     "txid": "959bebef5c0a3e8a1f0c8c1a6c2b7d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c",
-                    "vout": 0
+                    "vout": 0,
+                    "amount": 500000000000,
+                    "height": 1767214
                   },
                   {
                     "tokenId": "b4dc735a00000000000000000000000000000000000000000000000000000000_0",
@@ -2110,6 +1993,10 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "status": "error",
+                  "message": "not found"
                 }
               }
             }
@@ -2167,6 +2054,10 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "status": "error",
+                  "message": "not found"
                 }
               }
             }
@@ -2457,6 +2348,26 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                },
+                "example": {
+                  "openapi": "3.1.0",
+                  "info": {
+                    "title": "Open Exchange public read API",
+                    "version": "0.26.0"
+                  },
+                  "servers": [
+                    {
+                      "url": "{origin}"
+                    }
+                  ],
+                  "paths": {
+                    "/amm/pools": {
+                      "get": {
+                        "operationId": "P1",
+                        "summary": "Every enabled token's live pools"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2483,12 +2394,67 @@
               "text/html": {
                 "schema": {
                   "type": "string"
-                }
+                },
+                "example": "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Open Exchange API</title>\n…"
               }
             }
           }
         },
         "x-route": "P18b",
+        "x-cache": "as the swap pages are served",
+        "x-answered-by": "files in the swap app's www/"
+      }
+    },
+    "/api/skill.md": {
+      "get": {
+        "operationId": "P18c",
+        "summary": "The agent skill",
+        "description": "The open-exchange agent skill (SKILL.md: frontmatter, then markdown): how to read the market, run a swap, deploy and close pools, list a token, run and administer an exchange, and recover stuck swaps with `@dcasegr/amm-client`. Its references are at `/api/skill/references/<name>.md` and its examples at `/api/skill/examples/<name>`. Shipped with the `open-exchange` package (`skills/open-exchange`, its route table and versions regenerated from this document and package.json at build); mirrored from b-open-io/1sat-sdk `skills/open-exchange`.",
+        "tags": [
+          "docs"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Markdown.",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "---\nname: open-exchange\ndescription: \"This skill should be used when building against, operating, or testing an Open Exchange …\"\n---\n\n# Open Exchange\n…"
+              }
+            }
+          }
+        },
+        "x-route": "P18c",
+        "x-cache": "as the swap pages are served",
+        "x-answered-by": "files in the swap app's www/"
+      }
+    },
+    "/api/llms.txt": {
+      "get": {
+        "operationId": "P18d",
+        "summary": "llms.txt",
+        "description": "A short index for language models (the llms.txt convention, llmstxt.org): the exchange in one line and links to the reference page, this document, the agent skill and the README's first-token checklist.",
+        "tags": [
+          "docs"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Markdown, served as plain text.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "# Open Exchange\n\n> A 1Color (BRC-162) token AMM host on skein: liquidity providers' constant-product pools, a validator signing each swap leg, and a public read API over plain HTTP.\n\n…"
+              }
+            }
+          }
+        },
+        "x-route": "P18d",
         "x-cache": "as the swap pages are served",
         "x-answered-by": "files in the swap app's www/"
       }
@@ -2601,6 +2567,20 @@
                         }
                       }
                     }
+                  }
+                },
+                "example": {
+                  "fn": "enable",
+                  "result": {
+                    "tokenId": "959bebef5c0a3e8a1f0c8c1a6c2b7d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c_0",
+                    "topic": "tm_color_959bebef5c0a3e8a1f0c8c1a6c2b7d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c_0",
+                    "sym": "AMM2",
+                    "dec": 5,
+                    "status": "enabled",
+                    "since": 1793750400000,
+                    "paidBy": "02b7e3c1f0a95d4e8c6b2a17f3d9e05c4a8b6f2e1d3c7a9b5e0f4d2c8a6b1e3f70",
+                    "paymentTxid": "4c1e8a2f9b7d3e05a6c4b2d1f0e9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1",
+                    "satoshisPaid": 1000
                   }
                 }
               }
@@ -2816,26 +2796,6 @@
           "validatorPeerId": "16Uiu2HAmVaxF2exampleexampleexampleexampleexampleg1bo"
         }
       },
-      "Market": {
-        "type": "object",
-        "description": "The instance's market: the commission pkh this relay is paid at, and its minimum commission (0 when unset).",
-        "properties": {
-          "commissionPkh": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "hash160, 20 bytes hex."
-          },
-          "minCommissionBps": {
-            "type": "integer"
-          }
-        },
-        "example": {
-          "commissionPkh": "5f2c9d0a1b3e4f5061728394a5b6c7d8e9f00112",
-          "minCommissionBps": 1
-        }
-      },
       "Validator": {
         "type": "object",
         "description": "A validator beating on `tm_color_<token>-live` now.",
@@ -2931,56 +2891,6 @@
           "swaps"
         ]
       },
-      "ValidatorFees": {
-        "type": "object",
-        "properties": {
-          "validatorIdentityKey": {
-            "type": "string"
-          },
-          "sats": {
-            "type": "integer"
-          },
-          "tokens": {
-            "type": "integer"
-          },
-          "swaps": {
-            "type": "integer"
-          },
-          "pools": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "validatorIdentityKey",
-          "sats",
-          "tokens",
-          "swaps",
-          "pools"
-        ]
-      },
-      "CommissionFees": {
-        "type": "object",
-        "properties": {
-          "commissionPkh": {
-            "type": "string"
-          },
-          "sats": {
-            "type": "integer"
-          },
-          "tokens": {
-            "type": "integer"
-          },
-          "swaps": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "commissionPkh",
-          "sats",
-          "tokens",
-          "swaps"
-        ]
-      },
       "Terms": {
         "type": "object",
         "properties": {
@@ -3023,7 +2933,7 @@
             "description": "null: no terms set, this instance is a market only."
           },
           "market": {
-            "$ref": "#/components/schemas/Market"
+            "$ref": "#/components/schemas/ExchangeMarket"
           }
         },
         "required": [
@@ -3083,7 +2993,7 @@
       },
       "SwapReply": {
         "type": "object",
-        "description": "The validator's reply as it is (dag-json), or the host's `commission_missing` / `unreachable`.",
+        "description": "The validator's reply as it is (dag-json), or the host's `commission_missing` / `unreachable` / `rejected`.",
         "properties": {
           "ok": {
             "type": "boolean"
@@ -3097,7 +3007,7 @@
           },
           "reason": {
             "type": "string",
-            "description": "refused: the validator's reason (pool_spent, below_minimum, …), or the host's commission_missing / unreachable"
+            "description": "refused: the validator's reason (`pool_spent`, `bad_transaction`, `submit_refused`, `topic_refused`, `rejected`, `submit_failed`, `below_minimum`, …), or the host's `commission_missing` / `unreachable` / `rejected` (the broadcaster refused the signed swap)"
           },
           "detail": {
             "type": "string"
@@ -3269,7 +3179,7 @@
       },
       "Trade": {
         "type": "object",
-        "description": "A Swap's trade row (ls_amm_<token>, one per admitted Swap from skein-amm 0.36.0 on). Amounts are integers in base units; the fees are in the input asset; the reserves the pool's after the Swap; `at` the admitting step's time (ms); `height` the block height where the overlay has the transaction placed, else null.",
+        "description": "A Swap's trade row, as the host folds it from the token instance's `amm/hop` events (0.21.0, skein-amm 0.49.0; before, the pool lookup's own rows). Amounts are integers in base units; the fees are in the input asset; the reserves the pool's after the Swap; `at` the hop's time (ms: its block's time when the transaction was already mined when recorded, else the step's time); `height` the block height where the overlay has the transaction placed, else null.",
         "properties": {
           "txid": {
             "type": "string"
@@ -3311,7 +3221,7 @@
           },
           "at": {
             "type": "integer",
-            "description": "The hop's time. 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
+            "description": "The hop's time. 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards. 0.25.0: a label only; rows are ordered by event order, never by `at`."
           },
           "height": {
             "type": [
@@ -3359,7 +3269,7 @@
       },
       "Candle": {
         "type": "object",
-        "description": "One bucket: `t` its start (ms, a multiple of the resolution since the epoch), its open, high, low and close prices, each side's amounts summed and the trade count. Fill series: one per non-empty bucket of trades, the first, highest, lowest and last trade's prices. Market series (the host's): one per bucket holding a pool event, `o` the market price entering its first event, `c` after its last, `h` / `l` over those, the volumes and `n` from its Swaps.",
+        "description": "One bucket: `t` its start (ms, a multiple of the resolution since the epoch), its open, high, low and close prices, each side's amounts summed and the trade count. One per non-empty bucket of trades, the first, highest, lowest and last trade's prices (the first and last within a minute by arrival).",
         "properties": {
           "t": {
             "type": "integer"
@@ -3619,7 +3529,7 @@
           },
           "at": {
             "type": "integer",
-            "description": "That event's time (ms). 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards; equal `at` values keep the instance's order, and `/pools/at` and `/pools/history` judge a hop by the greatest `at` up to it in its pool's history."
+            "description": "That event's time (ms). 0.24.0 (skein-amm 0.52.0): the block's time (ms) when the hop was recorded already mined, else the step's time, never changed afterwards. 0.25.0: a label only; rows are ordered by event order, never by `at`."
           },
           "swaps": {
             "type": "integer"

@@ -27,7 +27,7 @@ Amounts are bigints in base units; prices are `{sats, tokens}` pairs.
 |---|---|---|
 | Reads | Plain `GET`s: `/amm/*` (host-wide), `/@<token>/amm/*` (per token), `/@discovery/1color/*`. SSE feeds `/amm/events`, `/@<token>/amm/events` | none |
 | Overlay writes | `POST /submit` (BRC-22, header `x-topics: ["tm_color_<id>"]`, AtomicBEEF body) and `POST /lookup` (BRC-24, service `ls_color_<id>`). The swap relay `POST /@<token>/amm/swap` | none |
-| Admin and paid enable | Messages signed by the wallet (BRC-104) to the `swap` instance: claim, terms, discovery, enable, price, withdraw. `POST /amm/enable` for the paid listing | wallet signature |
+| Admin and paid enable | Messages signed by the wallet (BRC-104) to the `swap` instance: claim, terms, discovery, enable, price. `POST /amm/enable` for the paid listing | wallet signature |
 
 Use `@dcasegr/amm-client` for all three. Hand-roll only reads and the overlay provider.
 
@@ -45,11 +45,15 @@ const pools = await client.tokenPools(t.tokenId);      // {market, pools, valida
 const { trades } = await client.trades(t.tokenId, { limit: 20 });   // newest first
 ```
 
-Other reads: `candles(id, {tf, from, to, series: "market"})` (`market` = the mid, chart this),
+Other reads: `candles(id, {tf, from, to})` (the fill candles; `fill` is the only series, the host
+refuses `series: "market"` with 400 since open-exchange 0.25.0),
 `holders(id, {limit})`, `stats(id)`, `poolsAt(id, t)`, `poolHistory(id, …)`,
 `positionsAll(poolIds)`, `spendsAll(outpoints)`, `watchPoolEvents(id | "all", onEvent)`. The
 event feeds are signals only (nothing replayed): on an event, re-read `tokenPools` and
-`statsAll({ids})`. Legs of one order share `payoutPkh` on trade rows: group by it.
+`statsAll({ids})`. Legs of one order share `payoutPkh` on trade rows: group by it. Trades come
+newest first in event order (never re-sorted by `at`); page with `next` as `before` (an event
+place `<s>.<i>.<thread>`). A trade's `at` is its block's time when the transaction was already
+mined when recorded, else the time it was recorded.
 `examples/read-market.ts` is the runnable version. Routes: `references/api.md`.
 
 ## Quick start: a swap with a connected wallet
@@ -82,7 +86,7 @@ legs. One swap per client at a time. `examples/swap.ts` runs this headless.
 |---|---|---|
 | `staging` `{sats, tokens}` | ONE wallet action reserves funds into `amm-swap` | "Approve in your wallet" |
 | `relaying` `{leg, amountIn, amountOut, filled}` | a leg is at the host's relay (up to 15 s) | pool N of the order; offer Stop |
-| `repricing` | the leg got `pool_spent`; fresh pools, priced again | "price refreshed" |
+| `repricing` | the leg got `pool_spent` (answered at once: another leg took the pool first); fresh pools, priced again | "price refreshed" |
 | `returning` `{filled}` | stopped early; unfilled rows moving back | "returning the rest" |
 | `stuck` `{rows}` | a spender the wallet could not take in yet | "still being received; check shortly" |
 | `done` `{result}` / `failed` `{result?, error?}` | end | outcome, legs with txids, `stop` reason |
@@ -120,6 +124,8 @@ The wallet must be BRC-100 and carry the BRC-207 1Color permission module
 - **Rebalance**: `rebalancePosition({outpoint, tokens, sats})` closes and redeploys in ONE
   wallet action. On an unknown failure, fall back to close then deploy.
 - **Positions**: `myPositions()` (fees earned, `rescinded`, `closed`).
+- **Collect fees**: `collectFees()` spends the LP's `openex fees` basket (sats to one BRC-29
+  address, each token's sum to one `p color` output); the pools stay open.
 - **Size**: keep each pool's sats well above the validator's `minLegSats` (100000 on the hosted
   testnet validator today; read it, do not hardcode). Swaps under it fail `below_minimum`.
 - **Deploy a token**: `deploy1Color.execute(ctx, {amount, decimals, symbol, icon?})` from
@@ -160,15 +166,25 @@ table, roles and terms naming: `references/admin-messages.md`.
 
 ## Load and scale
 
-- The exchange serializes ONE leg in flight per pool. A second leg on the same pool gets
-  `pool_spent` and is repriced against the new state.
-- Uncontended, a pool takes about one leg per 2.5 s. Contention amplifies: every concurrent
+- The validator takes the legs on one pool one at a time, in arrival order, each in one step
+  (no lock, nothing waits, no `pending`). A second leg on the same pool gets `pool_spent` at
+  once, with the pool's newest state, and is repriced against it.
+- An accepted leg is answered when the host's broadcast of it is taken by the broadcaster
+  (Arcade); refused there, the answer is `rejected` with the broadcaster's reason. Other
+  refusals worth knowing: `bad_transaction` (the request's BEEF fails the door's verifier, e.g. a
+  txid-only entry the validator does not hold, or the pool script fails on the signed
+  transaction; nothing signed), `submit_refused` / `topic_refused` (the validator's overlay
+  refused the signed transaction), `below_minimum`.
+- Measured on open-exchange 0.18.x (re-measure on a current host): uncontended, a pool took
+  about one leg per 2.5 s. Contention amplifies: every concurrent
   taker on a pool adds reprices and relays, so throughput per pool drops as takers rise. Spread
   load over pools (`maxSources` > 1, more pools) rather than more takers per pool.
-- A leg waits 15 s (`LEG_PATIENCE_MS`) for the relay. After a non-`pool_spent` refusal, or two
-  unanswered relays, the client excludes that pool; with none left the swap stops `no_pool`.
+- A leg waits 15 s (`LEG_PATIENCE_MS`) for the relay. After a non-`pool_spent` refusal, two
+  unanswered relays, or a `pool_spent` pool still listed at the next read, the client excludes
+  that pool; with none left the swap stops `no_pool`.
 - One swap at a time per wallet: run one process per wallet for parallel load.
-- A leg's tx is about 13 kB (about 1,300 sats at 100 sat/kB).
+- A leg's tx was about 13 kB on 0.18.x (about 1,300 sats at 100 sat/kB); since then what the
+  token's topic admitted goes by txid alone, so re-measure.
 
 ## Traps
 
@@ -202,9 +218,9 @@ before pinning.
 <!-- generated: versions -->
 | package | version |
 |---|---|
-| `open-exchange` | 0.18.1 (this host) |
-| `@dcasegr/amm-engine` | 0.46.1 (the host's dependency) |
-| `@dcasegr/amm-client` | 0.46.1 (pin to the same version as the engine) |
+| `open-exchange` | 0.26.0 (this host) |
+| `@dcasegr/amm-engine` | 0.52.1 (the host's dependency) |
+| `@dcasegr/amm-client` | 0.52.1 (pin to the same version as the engine) |
 <!-- /generated -->
 
 The wallet side, as the published client pins it (hand-maintained):
