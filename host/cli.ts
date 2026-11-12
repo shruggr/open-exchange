@@ -27,6 +27,7 @@ import { Exchange, DISCOVERY, DISCOVERY_TOPICS, SWAP } from "./exchange.ts";
 import { Relay } from "./relay.ts";
 import { Door } from "./door.ts";
 import { Pools } from "./pools.ts";
+import { Analytics, ANALYTICS_FILE } from "./analytics.ts";
 import { IMAGES_DIR, load, skein, skeinVersion, type Router, type Skein, type StampMod } from "./skein.ts";
 
 type Vars = Record<string, string | undefined>;
@@ -77,6 +78,8 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   const key = hostKey(sk, env.vars);
   mkdirSync(home, { recursive: true });
   const db = new sk.instances.HostDb(join(home, "host.db"));
+  // 2026-11-12: the host's analytics store, its own file beside host.db (host/analytics.ts).
+  const analytics = new Analytics(join(home, ANALYTICS_FILE));
   let ex: Exchange | undefined;
   // 0.11.0: the pool reads (pools.ts) — GET /amm/pools and /@<tokenId>/amm/pools, the host's (skein's appRead);
   // 0.13.0: GET /amm/stats and /amm/positions too; 0.14.0: /amm/spends, the market candles and the pool event
@@ -95,7 +98,7 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
     (req.method !== "GET" ? undefined : await pools?.appRead(h, route, url, req));
   const host = await sk.cli.runHost(db, env, { router: { ...o.router, appRead } });
   const log = (l: string) => env.out(`[open-exchange] ${l}`);
-  pools = new Pools(host.router, log, sk.cid.decode);
+  pools = new Pools(host.router, log, sk.cid.decode, analytics);
   door = new Door(host.router, log);
   relay = new Relay({ router: host.router, sk, log });
   const pl = pools;
@@ -111,7 +114,7 @@ export async function startExchange(sk: Skein, env: Env, o: { router?: Record<st
   // 0.20.1: the token instances' and discovery's packaged apps in place (0.21.0: no reindex).
   void ex.updateInstances();
   const exchange = ex;
-  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { unwatch?.(); await exchange.idle(); pl.stop(); await host.stop(); db.close(); } };
+  return { host, exchange, pools: pl, relay: relay!, db, stop: async () => { unwatch?.(); await exchange.idle(); pl.stop(); await host.stop(); analytics.close(); db.close(); } };
 }
 
 async function run(sk: Skein, given: Env, rest: string[]): Promise<number> {

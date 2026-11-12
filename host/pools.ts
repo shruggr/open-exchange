@@ -4,7 +4,9 @@
 // token instance) to a token instance's pools. 0.21.0 (G2, David: every public read path and its JSON stays; the
 // newest-first and aggregate reads are the host's, folded from the event stream): the pools, trades, candles, stats,
 // /pools/at and /pools/history come from the host's FOLD (the instance keeps /positions) of each token instance's `amm/hop` events
-// (host/folds, replayed from place zero at start, then live), no longer from the instance's lookup and read routes;
+// (host/folds, replayed from place zero at start, then live), no longer from the instance's lookup and read routes
+// (2026-11-12: the fold is the host's analytics store, host/analytics.ts, a SQLite file; a start continues after the
+// last place it took);
 // the feeds from the same subscription, no longer `appEvent`:
 //
 //   GET /@<tokenId>/amm/pools   {market, validators: [{identity, peerId, minLegSats?}], pools: [{poolId, lpPubKey,
@@ -32,6 +34,9 @@
 //   GET /@<tokenId>/amm/candles?tf=&from=&to=   the fill candles from the fold's minute tallies (host/folds/candles.ts);
 //                                `series=fill` the same; 0.25.0: `series=market` (the market-price series) removed —
 //                                any other series is refused 400.
+//   GET <origin>/amm/lp/fees?pool=id1,id2&from=<ms>&to=<ms>   (2026-11-12) the named pools' LP fees summed from the
+//                                analytics store: {from, to, sats, tokens: [{tokenId, amount}], swaps, pools, byPool:
+//                                [{poolId, tokenId, sats, tokens, swaps}]} (host/folds/lp-fees.ts).
 //   GET <origin>/amm/positions?pool=id1,id2   [{tokenId, …a row of GET /@<id>/amm/positions?pool=}]   every enabled
 //                                token's rows for the pool ids.
 //   GET <origin>/amm/spends?outpoint=a,b      (0.14.0) [{outpoint, tokenId?, spentBy?}]   one record per outpoint in
@@ -48,7 +53,6 @@ import { priceOf, type PoolState, type PricePair as Price } from "@dcasegr/amm-e
 import { SWAP } from "./exchange.ts";
 import type { Router } from "./skein.ts";
 import { Folds } from "./folds/index.ts";
-import type { TokenFold } from "./folds/fold.ts";
 import { livePoolRows } from "./folds/pools.ts";
 import { instanceStats } from "./folds/stats.ts";
 import { poolsAt } from "./folds/pools-at.ts";
@@ -57,6 +61,8 @@ import { BadQuery, tradeRow, trades } from "./folds/trades.ts";
 import { hopOf } from "./folds/hop.ts";
 import { latestDelivered } from "./events.ts";
 import { candles } from "./folds/candles.ts";
+import { lpFeesRead } from "./folds/lp-fees.ts";
+import type { Analytics } from "./analytics.ts";
 
 type RouterRequest = import("@dcasegr/skein/dist/host/router.js").RouterRequest;
 type RouterResponse = import("@dcasegr/skein/dist/host/router.js").RouterResponse;
@@ -76,6 +82,8 @@ export const EVENTS_ROUTE = `/${APP}/events`;
 export const TRADES_ROUTE = `/${APP}/trades`;
 export const POOLS_AT_ROUTE = `/${APP}/pools/at`;
 export const POOLS_HISTORY_ROUTE = `/${APP}/pools/history`;
+/** 2026-11-12: the LP fees of named pools (at swap's, host-wide). */
+export const LP_FEES_ROUTE = `/${APP}/lp/fees`;
 /** The SSE message name the feeds send (today's, skein-amm 0.41.0: `event: pool`). */
 export const POOL_EVENT = "pool";
 const CACHE = "public, max-age=5";
@@ -163,12 +171,14 @@ export class Pools {
   private readonly everyFeed = new Set<Subscriber>();
   /** Every open feed's end (the host stops). */
   private readonly ends = new Set<() => void>();
-  /** 0.21.0: the token instances' folds of their `amm/hop` events (host/folds). */
+  /** 0.21.0: the following of the token instances' `amm/hop` events (host/folds) into the analytics store. */
   readonly folds: Folds;
+  /** 2026-11-12: the host's analytics store (host/analytics.ts). */
+  readonly store: Analytics;
 
-  constructor(router: Router, say: (line: string) => void, decode: (bytes: Uint8Array) => unknown) {
-    this.router = router; this.say = say; this.decode = decode;
-    this.folds = new Folds(router, say);
+  constructor(router: Router, say: (line: string) => void, decode: (bytes: Uint8Array) => unknown, store: Analytics) {
+    this.router = router; this.say = say; this.decode = decode; this.store = store;
+    this.folds = new Folds(router, say, store);
     this.folds.onHop = (tokenId, h) => this.poolEvent(tokenId, h.row);
   }
 
@@ -177,7 +187,8 @@ export class Pools {
     await Promise.all(this.tokens().map((id) => this.folds.ensure(id).catch(() => undefined)));
   }
 
-  private fold(id: string): Promise<TokenFold> { return this.folds.ensure(id); }
+  /** The token instance caught up into the store (followed first when it is not). */
+  private fold(id: string): Promise<void> { return this.folds.ensure(id); }
 
   /** RouterOptions.appRead: the token routes at a token instance; the joins and the origin feed at swap; anything else undefined (forwarded). */
   async appRead(handle: string, route: string, url: URL, _req: RouterRequest): Promise<RouterResponse | undefined> {
@@ -190,6 +201,12 @@ export class Pools {
         const pool = q.get("pool");
         if (!pool) return problem(400, "want ?pool=<txid>_<vout>[,…]");
         return jsonAnswer(200, await this.allPositions(pool), { "cache-control": CACHE });
+      }
+      if (route === LP_FEES_ROUTE) {
+        try { return jsonAnswer(200, lpFeesRead(this.store, q), { "cache-control": CACHE }); } catch (e) {
+          if (e instanceof BadQuery) return problem(400, e.message);
+          throw e;
+        }
       }
       if (route === SPENDS_ROUTE) {
         const ops = (q.get("outpoint") ?? "").split(",").map((x) => x.trim()).filter((x) => x !== "");
@@ -210,11 +227,11 @@ export class Pools {
       if (route === STATS_ROUTE) return jsonAnswer(200, await this.tokenStats(handle), { "cache-control": CACHE });
       if (route === CANDLES_ROUTE) {
         const series = q.get("series");
-        if (series === null || series === "fill") return jsonAnswer(200, candles(await this.fold(handle), q), { "cache-control": CACHE });
+        if (series === null || series === "fill") { await this.fold(handle); return jsonAnswer(200, candles(this.store, handle, q), { "cache-control": CACHE }); }
         return problem(400, "series: fill");
       }
       if (route === TRADES_ROUTE) {
-        const f = await this.fold(handle);
+        await this.fold(handle);
         const h = (txid: string) => this.folds.heightOf(handle, txid);
         const txid = q.get("txid");
         if (txid !== null) {
@@ -222,19 +239,20 @@ export class Pools {
           // The recognizer's answer for one Swap: the latest `amm/output/<txid>.0` row (its continuation), standing.
           const got = await latestDelivered(this.router, handle, `amm/output/${txid}.0`).catch(() => undefined);
           const hop = got ? hopOf(got.rec, got.place) : undefined;
-          const standing = hop && hop.kind === "swap" && hop.txid === txid && f.hops.some((x) => x.txid === txid);
+          const standing = hop && hop.kind === "swap" && hop.txid === txid && this.store.standing(handle, txid);
           return standing ? jsonAnswer(200, tradeRow(hop, await h(txid)), { "cache-control": CACHE }) : problem(404, "no trade for this txid");
         }
-        return jsonAnswer(200, await trades(f, q, h), { "cache-control": CACHE });
+        return jsonAnswer(200, await trades(this.store, handle, q, h), { "cache-control": CACHE });
       }
       if (route === POOLS_AT_ROUTE) {
         const t = q.get("t");
         if (t === null || !/^\d+$/.test(t)) return problem(400, "want ?t=<ms>");
-        return jsonAnswer(200, poolsAt(await this.fold(handle), Number(t)), { "cache-control": CACHE });
+        await this.fold(handle);
+        return jsonAnswer(200, poolsAt(this.store, handle, Number(t)), { "cache-control": CACHE });
       }
       if (route === POOLS_HISTORY_ROUTE) {
         const op = q.get("outpoint");
-        const f = await this.fold(handle);
+        await this.fold(handle);
         let start: { poolId: string; place: string } | null = null;
         if (op !== null) {
           // A wallet's pool output `<txid>_<vout>` (the recognizer names outputs `<txid>.<vout>`): its pool and the
@@ -242,10 +260,9 @@ export class Pools {
           // row, so "strictly after the output" is strictly after the hop).
           const m = /^([0-9a-f]{64})[_.](\d+)$/.exec(op);
           if (!m) return problem(400, "outpoint: <txid>_<vout>");
-          const made = f.hops.find((h) => h.outpoint === `${m[1]}_${m[2]}`);
-          if (made) start = { poolId: made.poolId, place: made.place };
+          start = this.store.madeBy(handle, `${m[1]}_${m[2]}`) ?? null;
         }
-        return jsonAnswer(200, poolHistory(await this.fold(handle), q, start), { "cache-control": CACHE });
+        return jsonAnswer(200, poolHistory(this.store, handle, q, start), { "cache-control": CACHE });
       }
     } catch (e) {
       if (e instanceof BadQuery) return problem(400, e.message);
@@ -302,7 +319,8 @@ export class Pools {
 
   /** P2: the token's live pools at or above its market's minimum commission, the market, the validators. */
   async tokenPools(id: string): Promise<TokenPools> {
-    const listed = livePoolRows(await this.fold(id));
+    await this.fold(id);
+    const listed = livePoolRows(this.store, id);
     const terms = await this.instanceRead(id, "GET", "terms") as { market?: { minCommissionBps?: unknown } };
     const identityKey = (await this.router.hydrate(id)).identity;
     const market: Market = { identityKey, ...(terms?.market && typeof terms.market === "object" && terms.market.minCommissionBps !== undefined ? { minCommissionBps: terms.market.minCommissionBps } : {}) };
@@ -342,13 +360,14 @@ export class Pools {
 
   /** The mid price of the pools listed at `t` (every listed pool, whatever its validator; the fold), or null. */
   private async midAt(id: string, t: number): Promise<Price | null> {
-    return priceOf(poolsAt(await this.fold(id), t).map(poolState))?.mid ?? null;
+    await this.fold(id);
+    return priceOf(poolsAt(this.store, id, t).map(poolState))?.mid ?? null;
   }
 
   /** A token's stats (0.14.0): the instance's row merged with the listed pools and their price (`mergeStats`). */
   async tokenStats(id: string): Promise<Rec> {
     const now = Date.now();
-    const [row, answer, then1h, then24h] = await Promise.all([this.fold(id).then((f) => instanceStats(f, now)), this.tokenPools(id), this.midAt(id, Math.max(0, now - HOUR_MS)), this.midAt(id, Math.max(0, now - 24 * HOUR_MS))]);
+    const [row, answer, then1h, then24h] = await Promise.all([this.fold(id).then(() => instanceStats(this.store, id, now)), this.tokenPools(id), this.midAt(id, Math.max(0, now - HOUR_MS)), this.midAt(id, Math.max(0, now - 24 * HOUR_MS))]);
     return mergeStats(row, answer.pools, then1h, then24h);
   }
 

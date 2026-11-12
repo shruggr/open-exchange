@@ -40,7 +40,7 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/terms`,
 `/api/openapi.json`, `/api/`.
 
 <!-- generated: routes -->
-### 34 routes, 8 tags (OpenAPI document version 0.28.0)
+### 35 routes, 8 tags (OpenAPI document version 0.28.0)
 
 | tag | method | path | query (`*` required) | cache | summary |
 |---|---|---|---|---|---|
@@ -57,6 +57,7 @@ are from the spec and README): `/amm/events`, `/@{token}/amm/pools`, `/terms`,
 | history | GET | `/@{token}/amm/candles` | tf*, from*, to*, series | state | A token's candles |
 | history | GET | `/@{token}/amm/stats` |  | state | A token's stats |
 | history | GET | `/@{token}/amm/color/{tokenId}/holders` | limit, skip | state | A token's holders |
+| fees | GET | `/amm/lp/fees` | pool*, from, to | state | LP fees of pools over a period |
 | fees | GET | `/@{token}/amm/positions` | pool* | state | Pool positions by pool id |
 | chain | GET | `/amm/spends` | outpoint* | state | Outpoint spends across tokens |
 | chain | GET | `/@{token}/amm/spends` | outpoint* | state | Outpoint spends |
@@ -98,6 +99,12 @@ come in event order, and `at` is the block's time when the transaction was mined
 
 // GET /amm/spends?outpoint=a.1,b.2
 [{ "outpoint": "a.1", "tokenId": "<id>", "spentBy": "<txid>" }, { "outpoint": "b.2" }]
+
+// GET /amm/lp/fees?pool=<poolId>,<poolId>&from=<ms>&to=<ms>  (from ≤ at < to, both optional;
+// a buy's feeLp in sats, a sell's in the pool's token; amounts are decimal strings)
+{ "from": 1793000000000, "to": 1793086400000, "sats": "42",
+  "tokens": [{ "tokenId": "<id>", "amount": "105" }], "swaps": 3, "pools": 1,
+  "byPool": [{ "poolId": "<poolId>", "tokenId": "<id>", "sats": "42", "tokens": "105", "swaps": 3 }] }
 ```
 
 ## The swap relay (`POST /@<token>/amm/swap`)

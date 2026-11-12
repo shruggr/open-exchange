@@ -26,6 +26,7 @@ The read API's routes, plain GETs, and the pool event feeds (0.14.0: every pool 
 | `/amm/pools` | every enabled token's live pools, one array (a plain read) |
 | `/amm/stats` (`?ids=`) | every enabled token's `/stats` as the host answers it, one array (the landing page reads it once per load and every 30 s while visible) |
 | `/amm/positions?pool=` | every enabled token's positions for the pool ids, each with its `tokenId` |
+| `/amm/lp/fees?pool=a,b&from=&to=` | the LP fees of the named pools' swaps with `from ≤ at < to` (both optional): `{from, to, sats, tokens: [{tokenId, amount}], swaps, pools, byPool: [{poolId, tokenId, sats, tokens, swaps}]}`, a buy's `feeLp` in sats, a sell's in the pool's token, amounts as decimal strings |
 | `/amm/spends?outpoint=a,b` | one record per outpoint, `{outpoint, tokenId?, spentBy?}`: each enabled token's `/spends`, the first that names a spender |
 | `/amm/events` | Server-Sent Events, every enabled token's pool events: `event: pool`, `data: {tokenId, …row}` — the token instance's lookup's row as it admits a deploy, swap, close or rescind (or a `revert` of a rejected one), passed through; nothing on connect, nothing kept, nothing replayed |
 | `/@<token>/amm/events` | the same feed for one token |
@@ -162,6 +163,10 @@ only the admin disables. `@dcasegr/amm-client`'s `enableToken(tokenId, {deployBe
 - **One key** (skein#160): `SKEIN_KEY_FILE`. It owns every instance Open Exchange makes, swap
   included; the wallet that claims swap is its admin.
 - **The images**: this repository's `image/`. Open Exchange sets `SKEIN_IMAGES_DIR` to it.
+- **The analytics store**: `$SKEIN_HOME/analytics.sqlite`, its own SQLite file beside host.db and
+  store.sqlite. The trades, candles, stats, pool listings, `/pools/at`, `/pools/history` and the LP
+  fees are read from it; it is filled from each token instance's `amm/hop` events and keeps, per
+  instance, the last event place it took, so a start reads only the events after it.
 
 ## The first run
 

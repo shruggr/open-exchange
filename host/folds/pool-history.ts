@@ -4,8 +4,9 @@
 // `outpoint=` a wallet's pool output: its pool, strictly after the place of its latest `amm/output/<op>` row (the caller
 // reads it: `start`). Each row the hop's record as emitted. 0.25.0 (David 2026-11-11): the rows in EVENT order, never
 // re-sorted; `from`/`to` judge each row on its own `at`.
-import type { TokenFold } from "./fold.ts";
-import { PLACE, placeCmp } from "./hop.ts";
+// 2026-11-12: read from the analytics store (host/analytics.ts `history`: ORDER BY s, i).
+import type { Analytics } from "../analytics.ts";
+import { PLACE } from "./hop.ts";
 import { BadQuery } from "./trades.ts";
 import type { Rec } from "../events.ts";
 
@@ -14,7 +15,7 @@ export const MAX_EVENTS = 500;
 export class NotFound extends Error {}
 
 /** `start`: the `outpoint=` row's pool and place (the latest `amm/output/<op>`), or undefined when there is none. */
-export function poolHistory(f: TokenFold, q: URLSearchParams, start?: { poolId: string; place: string } | null): { events: Rec[]; next: string | null } {
+export function poolHistory(a: Analytics, tokenId: string, q: URLSearchParams, start?: { poolId: string; place: string } | null): { events: Rec[]; next: string | null } {
   const int = (k: string) => { const v = q.get(k); if (v === null) return undefined; if (!/^\d+$/.test(v)) throw new BadQuery(`${k}: an integer`); return Number(v); };
   const from = int("from"), to = int("to");
   const limit = int("limit") ?? MAX_EVENTS;
@@ -28,7 +29,7 @@ export function poolHistory(f: TokenFold, q: URLSearchParams, start?: { poolId: 
     pool = start.poolId;
     after = start.place;
   }
-  const rows = f.hops.filter((h) => (pool === null || h.poolId === pool) && (from === undefined || h.at >= from) && (to === undefined || h.at < to) && (after === null || placeCmp(after, h.place) < 0));
+  const rows = a.history(tokenId, { limit: limit + 1, ...(after !== null ? { after } : {}), ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(pool !== null ? { pool } : {}) });
   const page = rows.slice(0, limit);
   return { events: page.map((h) => h.row), next: rows.length > limit ? page[page.length - 1]!.place : null };
 }

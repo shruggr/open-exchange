@@ -71,7 +71,8 @@ import { firstRun, main, settings, startExchange, type Env, type Running } from 
 import { changeBps, mergeStats, poolState } from "../../host/pools.ts";
 import { commissionPkhFor } from "../../host/relay.ts";
 import { instanceStats } from "../../host/folds/stats.ts";
-import { TokenFold } from "../../host/folds/fold.ts";
+import { Analytics } from "../../host/analytics.ts";
+import type { Hop } from "../../host/folds/hop.ts";
 import { record } from "../../host/events.ts";
 import { priceOf } from "@dcasegr/amm-engine";
 
@@ -515,7 +516,8 @@ try {
   // and P2 (commission below the market's minimum) are not in the host's answer. 0.20.0 (skein-amm 0.48.0 D4): the
   // instance's own /stats row carries only what the host does not recompute — no TVL, pool count or changes.
   // 0.21.0: the instance part is the host's fold now (host/folds/stats.ts), not an instance route.
-  const ownA = instanceStats(await x!.pools.folds.ensure(A), Date.now()) as Record<string, unknown>;
+  await x!.pools.folds.ensure(A);
+  const ownA = instanceStats(x!.pools.store, A, Date.now()) as Record<string, unknown>;
   check(JSON.stringify(Object.keys(ownA)) === JSON.stringify(["tokenId", "lastTradePrice", "volume24hSats", "volume24hTokens", "buys24h", "sells24h", "lastTradeAt", "volumeSats", "volumeTokens", "trades"]) && ownA.lastTradeAt === null,
     `A's instance part of the stats (0.21.0: the host's fold): the last fill, the volumes and the counts only (${JSON.stringify(ownA, (_k, v) => typeof v === "bigint" ? String(v) : v)})`);
   const stA0 = await getJson(`/@${A}/amm/stats`) as Record<string, unknown> | undefined;
@@ -611,11 +613,14 @@ try {
   // 0.22.0 (skein 0.8.0: events placed by an instance-wide step number, the kernel's order TRUE): the fold applied live
   // equals a fold rebuilt from a read of the same events — the same hops, in the same places, the same pool states.
   {
-    const live = await x.pools.folds.ensure(B);
-    const fresh = new TokenFold(B);
-    for (const d of await r.events.read(B, { name: "amm/hop" })) fresh.take(record(d), d.id);
-    const view = (f: TokenFold) => JSON.stringify({ hops: f.hops.map((h) => [h.place, h.kind, h.txid, h.poolId, h.swaps]), current: [...f.current.entries()].sort().map(([k, h]) => [k, h.place, h.outpoint ?? null]) });
-    check(view(live) === view(fresh) && live.hops.length > 0, `B's fold applied live equals the fold rebuilt from the index (${live.hops.length} hops; places ${live.hops.map((h) => h.place.split(".").slice(0, 2).join(".")).join(" ")})`);
+    await x.pools.folds.ensure(B);
+    const live = x.pools.store;
+    const fresh = new Analytics(":memory:");
+    for (const d of await r.events.read(B, { name: "amm/hop" })) fresh.take(B, record(d), d.id);
+    const view = (a: Analytics) => JSON.stringify({ hops: a.hops(B).map((h: Hop) => [h.place, h.kind, h.txid, h.poolId, h.swaps]), current: a.poolsNow(B).map((h: Hop) => [h.poolId, h.place, h.outpoint ?? null]) });
+    const liveHops = live.hops(B);
+    check(view(live) === view(fresh) && liveHops.length > 0, `B's rows taken live equal the rows rebuilt from the index (${liveHops.length} hops; places ${liveHops.map((h) => h.place.split(".").slice(0, 2).join(".")).join(" ")})`);
+    fresh.close();
   }
   const tr = await fetch(`${R}/@${B}/amm/trades`);
   const trj = await tr.json().catch(() => ({})) as { trades?: Array<Record<string, unknown>>; next?: unknown };
