@@ -6,7 +6,8 @@
 // /submit route (generic skein); this host does not use it.
 //
 //   POST /@<handle>/submit and POST /submit (bare host, routed by X-Topics to the instance: skein asks appRead for a topic-routed
-//   request before forwarding it) with the BEEF as the body and X-Topics a JSON array of topics:
+//   request before forwarding it) with the BEEF as the body and X-Topics the topics, a JSON array or a comma-separated list (as
+//   the skein router reads it: starting with `[` → JSON, else split on `,`, trimmed, empties dropped):
 //   1. every named topic must be one the instance serves (host.db `instances.topics`): else 400;
 //   2. T = the BEEF's subject (the Atomic BEEF's, else its last transaction);
 //   3. answered at once, nothing handed over, ONLY when the submission cannot change anything: T's latest verdict
@@ -69,9 +70,12 @@ export class Door {
     if (route !== SUBMIT_ROUTE || req.method !== "POST") return undefined;
     const app = overlayApp(handle);
     if (!app) return undefined;
+    // X-Topics as the skein router reads it (Router.overlayTarget): starts with `[` → a JSON array; else a comma list.
+    const h = (req.headers["x-topics"] ?? "").trim();
     let topics: unknown;
-    try { topics = JSON.parse(req.headers["x-topics"] ?? ""); } catch { topics = undefined; }
-    if (!Array.isArray(topics) || topics.length === 0 || !topics.every((t) => typeof t === "string")) return problem(400, "ERR_BAD_REQUEST", "X-Topics: a JSON array of topic names");
+    if (h.startsWith("[")) { try { topics = JSON.parse(h); } catch { topics = undefined; } }
+    else topics = h.split(",").map((x) => x.trim()).filter(Boolean);
+    if (!Array.isArray(topics) || topics.length === 0 || !topics.every((t) => typeof t === "string")) return problem(400, "ERR_BAD_REQUEST", "X-Topics: a JSON array of topic names or a comma-separated list");
     const raw = this.r.o.db.get(handle)?.topics;
     let served: string[] = [];
     try { served = raw ? JSON.parse(raw) as string[] : []; } catch { served = []; }
