@@ -253,8 +253,8 @@ when its version differs, installed in place the same way. (0.21.0: no reindex â
 0.28.0 (skein-amm 0.55.0) changes the pool contract: pools made under 0.27.x are no pools to it, and the
 upgrade installs the new token app into every token instance as above. Before upgrading a host, its LPs
 collect their fees and close their pools with 0.27.x; or the host is relaunched fresh. Hosts on 0.27.x and
-0.28.0 do not recognise each other's pools. 0.28.0 is published under the npm tag `next`:
-`npm install open-exchange@0.28.0`.
+0.28.0 do not recognise each other's pools. The 0.28 line is published under the npm tag `next`:
+`npm install open-exchange@0.28.1`.
 
 `run` takes every setting `skein-host run` takes from `host.env`. It serves everything
 `skein-host` serves:

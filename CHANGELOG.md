@@ -3,7 +3,7 @@
 Released versions of open-exchange from 0.28.0. Earlier releases are described by their release commits
 and tags (`git log`, `git tag -n`).
 
-## Unreleased
+## 0.28.1 (npm tag `next`)
 
 - The host's analytics store: the swap data the host derives from each token instance's `amm/hop`
   events (trades, candles, stats, the pool listings and their lifetime counters, `/pools/at`,
@@ -16,6 +16,10 @@ and tags (`git log`, `git tag -n`).
   (`from` ≤ at < `to`, both optional), a buy's `feeLp` in sats, a sell's in the pool's token:
   `{from, to, sats, tokens: [{tokenId, amount}], swaps, pools, byPool: [{poolId, tokenId, sats, tokens,
   swaps}]}`, amounts as decimal strings. In the OpenAPI document (H10) and the skill's route table.
+
+Upgrading from 0.28.0: npm install and restart; the first start builds analytics.sqlite from each
+instance's events. Published under the npm dist-tag `next`; `latest` is 0.27.2 (the same change on the
+0.27 line). Install with `open-exchange@0.28.1`.
 
 ## 0.28.0 (npm tag `next`)
 
