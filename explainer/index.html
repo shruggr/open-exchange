@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Open Exchange — how the decentralized exchange works</title>
+  <meta name="description" content="An explainer of the Open Exchange on BSV: non-custodial swaps, on-chain AMM pools, one instance per token, competing validators and relay markets.">
+  <link rel="icon" href="data:,">
+  <link rel="preload" href="fonts/outfit-latin-300-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/instrument-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="bar">
+      <a class="brand" href="#top">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="16" r="4" fill="#AD5636"/>
+          <circle cx="6" cy="10" r="2.5" fill="#98A2DA"/>
+          <circle cx="26" cy="10" r="2.5" fill="#98A2DA"/>
+          <circle cx="6" cy="24" r="2.5" fill="#98A2DA"/>
+          <circle cx="26" cy="24" r="2.5" fill="#98A2DA"/>
+          <path d="M16 16 L6 10 M16 16 L26 10 M16 16 L6 24 M16 16 L26 24" stroke="#5A66B0" stroke-width="1.2"/>
+        </svg>
+        <span class="word">Open Exchange</span>
+      </a>
+      <span class="status">Live on BSV testnet · active development</span>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <p class="eyebrow">A decentralized exchange on BSV</p>
+      <h1>A decentralized exchange made of independent instances, not one server.</h1>
+      <p class="lead">The Open Exchange swaps BSV and 1Color tokens directly against pools that live on the BSV chain. Your wallet keeps custody. Each enabled token is served by its own instance, with its own validator and public lookup. Validators compete on terms.</p>
+      <div class="hero-facts">
+        <div class="fact"><strong>Non-custodial</strong><span>Funds stay in the wallet and the pool, never on an exchange balance.</span></div>
+        <div class="fact"><strong>On-chain pools</strong><span>The pool's reserves and rules are a BSV output, not a server row.</span></div>
+        <div class="fact"><strong>No central book</strong><span>One instance per token; no global order book or matching engine.</span></div>
+        <div class="fact"><strong>Competing validators</strong><span>Fees are runtime terms, not fixed in the software.</span></div>
+      </div>
+    </section>
+
+    <section class="sec" id="architecture">
+      <div class="sec-head">
+        <h2>How a swap moves through the system</h2>
+        <p class="lead">A swap passes through five roles. The pool holds the AMM reserves, the wallet holds the taker's funds, and only the chain makes the swap final.</p>
+      </div>
+
+      <div class="diagram-wrap">
+        <div class="diagram">
+          <svg id="map" viewBox="0 0 960 560" role="img" aria-labelledby="map-title map-desc">
+            <title id="map-title">Open Exchange roles</title>
+            <desc id="map-desc">A wallet, an on-chain pool, a token instance with validator, relay and lookup, a peer overlay, and the BSV chain.</desc>
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 Z" fill="#7C86C9"/>
+              </marker>
+              <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+                <feGaussianBlur stdDeviation="4" result="blur"/>
+                <feMerge>
+                  <feMergeNode in="blur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+            </defs>
+
+            <g id="edges">
+              <path data-edge="wallet-pool" class="edge" d="M240 270 L360 270" marker-end="url(#arrow)"/>
+              <path data-edge="instance-pool" class="edge" d="M680 280 L580 280" marker-end="url(#arrow)"/>
+              <path data-edge="wallet-instance" class="edge" d="M240 340 C240 420 680 420 680 385" marker-end="url(#arrow)" stroke-dasharray="6 6"/>
+              <path data-edge="instance-peers" class="edge" d="M790 195 C790 160 770 145 760 120" marker-end="url(#arrow)"/>
+              <path data-edge="peers-chain" class="edge" d="M920 120 L920 455" marker-end="url(#arrow)"/>
+              <path data-edge="pool-chain" class="edge" d="M470 350 L470 455" marker-end="url(#arrow)" stroke-dasharray="3 5"/>
+            </g>
+
+            <g id="edge-labels">
+              <text class="edge-label" x="300" y="258" text-anchor="middle">builds the swap</text>
+              <text class="edge-label" x="630" y="268" text-anchor="middle">checks + signs</text>
+              <text class="edge-label" x="460" y="434" text-anchor="middle">relay request</text>
+              <text class="edge-label" x="810" y="162" text-anchor="middle">announce</text>
+              <text class="edge-label" x="930" y="300" text-anchor="middle">sync</text>
+              <text class="edge-label" x="480" y="405" text-anchor="middle">on-chain</text>
+            </g>
+
+            <g id="node-peers" data-node="peers" class="node" tabindex="0" role="button" aria-label="Peer overlay">
+              <rect class="box" x="180" y="30" width="740" height="90" rx="16"/>
+              <text class="node-title" x="550" y="60" text-anchor="middle">Peer overlay</text>
+              <text class="node-sub" x="550" y="82" text-anchor="middle">other hosts and instances — gossip, not a central server</text>
+              <circle cx="430" cy="100" r="3" fill="#5A66B0"/>
+              <circle cx="460" cy="100" r="3" fill="#5A66B0"/>
+              <circle cx="490" cy="100" r="3" fill="#5A66B0"/>
+            </g>
+
+            <g id="node-wallet" data-node="wallet" class="node" tabindex="0" role="button" aria-label="Your wallet">
+              <rect class="box" x="50" y="220" width="190" height="120" rx="16"/>
+              <text class="node-title" x="145" y="252" text-anchor="middle">Your wallet</text>
+              <text class="node-sub" x="145" y="274" text-anchor="middle">holds sats and tokens</text>
+              <text class="node-sub" x="145" y="292" text-anchor="middle">custody never leaves it</text>
+              <text class="node-mono" x="145" y="314" text-anchor="middle">no deposit / withdrawal</text>
+            </g>
+
+            <g id="node-pool" data-node="pool" class="node" tabindex="0" role="button" aria-label="Pool">
+              <rect class="box" x="360" y="205" width="220" height="145" rx="16"/>
+              <text class="node-title" x="470" y="237" text-anchor="middle">Pool</text>
+              <text class="node-sub" x="470" y="259" text-anchor="middle">a live BSV output</text>
+              <text class="node-sub" x="470" y="277" text-anchor="middle">reserves + contract rules</text>
+              <text class="node-mono" x="470" y="300" text-anchor="middle">LP · validator · fees</text>
+              <text class="node-mono" x="470" y="320" text-anchor="middle">AMM pool</text>
+            </g>
+
+            <g id="node-instance" data-node="instance" class="node" tabindex="0" role="button" aria-label="Token instance">
+              <rect class="box" x="680" y="195" width="230" height="190" rx="16"/>
+              <text class="node-title" x="795" y="227" text-anchor="middle">Token instance</text>
+              <text class="node-sub" x="795" y="247" text-anchor="middle">one per enabled token</text>
+              <rect class="pill" x="694" y="264" width="72" height="26" rx="13"/>
+              <text class="pill-text" x="730" y="281" text-anchor="middle">validator</text>
+              <rect class="pill" x="774" y="264" width="56" height="26" rx="13"/>
+              <text class="pill-text" x="802" y="281" text-anchor="middle">relay</text>
+              <rect class="pill" x="838" y="264" width="62" height="26" rx="13"/>
+              <text class="pill-text" x="869" y="281" text-anchor="middle">lookup</text>
+              <text class="node-sub" x="795" y="312" text-anchor="middle">validator signs · relay carries</text>
+              <text class="node-sub" x="795" y="330" text-anchor="middle">lookup lists pools &amp; prices</text>
+              <text class="node-mono" x="795" y="352" text-anchor="middle">own address, own identity</text>
+            </g>
+
+            <g id="node-chain" data-node="chain" class="node" tabindex="0" role="button" aria-label="BSV chain">
+              <rect class="box" x="180" y="455" width="740" height="70" rx="14"/>
+              <text class="node-title" x="550" y="483" text-anchor="middle">BSV chain</text>
+              <text class="node-sub" x="550" y="505" text-anchor="middle">settlement and source of truth</text>
+            </g>
+          </svg>
+          <div class="diagram-hint">Click any part of the diagram to read its role.</div>
+        </div>
+
+        <div class="mobile-roles" role="group" aria-label="Roles in a swap">
+          <button class="role-card" data-node="wallet" type="button">
+            <span class="role-name">Your wallet</span>
+            <span class="role-desc">holds funds, signs the transaction</span>
+          </button>
+          <button class="role-card" data-node="pool" type="button">
+            <span class="role-name">Pool</span>
+            <span class="role-desc">on-chain AMM output</span>
+          </button>
+          <button class="role-card" data-node="instance" type="button">
+            <span class="role-name">Token instance</span>
+            <span class="role-desc">validator, relay and lookup</span>
+          </button>
+          <button class="role-card" data-node="peers" type="button">
+            <span class="role-name">Peer overlay</span>
+            <span class="role-desc">gossip, not a central server</span>
+          </button>
+          <button class="role-card" data-node="chain" type="button">
+            <span class="role-name">BSV chain</span>
+            <span class="role-desc">settlement and source of truth</span>
+          </button>
+        </div>
+
+        <aside class="info" aria-live="polite">
+          <h3 id="info-title">Click a part</h3>
+          <p id="info-body">The wallet, pool, instance, peer overlay and chain each play a different role in a swap.</p>
+        </aside>
+      </div>
+
+      <div class="walker" aria-live="polite">
+        <div class="walker-head">
+          <span class="step-count" id="step-count">Step 1 of 7</span>
+          <div class="dots" id="dots" role="group" aria-label="Swap steps"></div>
+        </div>
+        <div class="walker-body">
+          <h3 id="step-title">Custody stays with you</h3>
+          <p id="step-body">Your wallet holds the sats and tokens. Nothing is deposited to the exchange, so there is no exchange balance to withdraw.</p>
+        </div>
+        <div class="walker-controls">
+          <button id="prev" class="btn ghost" type="button">Previous</button>
+          <button id="next" class="btn" type="button">Next step</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="instances">
+      <h2>Instances, not accounts</h2>
+      <p class="lead">The Open Exchange is not one exchange server with a list of user accounts. When a token is enabled, the host creates an instance for that token. The instance has its own address and identity, and it serves that token's traffic: the overlay topic that accepts its transactions, the lookup that lists its pools and prices, and the validator and relay that sign and carry swaps.</p>
+
+      <div class="cards">
+        <div class="card">
+          <h3>One token, one instance</h3>
+          <p>An enabled token gets its own instance at its own address. The instance is that token's exchange surface, not a row in a global book.</p>
+        </div>
+        <div class="card">
+          <h3>Public lookups</h3>
+          <p>The instance publishes live pools, reserves and prices. Anyone can read the lookup and the public read API without an account.</p>
+        </div>
+        <div class="card">
+          <h3>Discovery is optional</h3>
+          <p>A separate discovery instance advertises token deploys. It can be switched off; a swap against a known token does not depend on it.</p>
+        </div>
+        <div class="card">
+          <h3>Stopping is not deleting</h3>
+          <p>An instance can be stopped and started. The pools stay on the chain; stopping only takes the service off the network.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="validators">
+      <h2>Validators, relays and fees</h2>
+      <p class="lead">A pool is one token/BSV pair, affirmed by a validator when it is deployed. The validator's signature is written into the pool output itself, so the pool attests itself. The lookup lists only pools whose affirmation verifies.</p>
+      <p>When a taker swaps, the validator checks the pool's state, its own fee terms and the transaction, then signs the pool input. The taker signs the rest; the validator signs last. Fees are the validator's runtime terms, set by the exchange admin — not baked into the software.</p>
+
+      <div class="fee-grid">
+        <div class="fee">
+          <h3>LP fee</h3>
+          <p>Paid to the pool's LP key, in the asset being swapped in.</p>
+        </div>
+        <div class="fee">
+          <h3>Validator fee</h3>
+          <p>Paid to the validator that signs the swap, in the input asset.</p>
+        </div>
+        <div class="fee">
+          <h3>Relay commission</h3>
+          <p>Paid to the relay that carried the swap, in the input asset.</p>
+        </div>
+      </div>
+
+      <p class="market-note">The market side is the relay: it carries the transaction to the validator the taker names and takes a commission. Its minimum commission is a listing preference on the Swap page, not an enforcement rule: a swap can still go directly to a validator.</p>
+      <p>A validator can refuse to sign or go offline. It cannot move the pool's funds outside the contract, and the LP can close the pool at any time.</p>
+    </section>
+
+    <section class="sec" id="control">
+      <h2>Who controls what</h2>
+      <p class="lead">Control is split. The host runs the machinery, the admin configures tokens, the LP owns the pool, and the validator can only sign or refuse.</p>
+
+      <div class="table-wrap">
+        <table class="control-table">
+          <thead>
+            <tr><th>Part</th><th>Controls</th><th>What it cannot do</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Wallet</td><td>Holds the funds and signs the taker's transaction.</td><td>There is no exchange balance to withdraw.</td></tr>
+            <tr><td>Pool</td><td>Holds the reserves and enforces the swap contract.</td><td>Cannot be rewritten by the host or the admin.</td></tr>
+            <tr><td>LP</td><td>Deploys the pool and can close it.</td><td>No one else can close it; a close returns the funds to the LP.</td></tr>
+            <tr><td>Validator</td><td>Affirms pools, signs swaps and sets its fees.</td><td>Cannot move funds outside the contract; it can refuse or go offline.</td></tr>
+            <tr><td>Relay / market</td><td>Carries swaps and takes a commission.</td><td>Cannot force a swap through its minimum commission.</td></tr>
+            <tr><td>Host operator</td><td>Runs the instances and owns them; root on the exchange for updates.</td><td>Does not hold user funds.</td></tr>
+            <tr><td>Admin (claimant)</td><td>Enables tokens, sets token terms and defaults, and toggles discovery.</td><td>Is not root and does not own the host's key.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sec" id="limits">
+      <h2>What “decentralized” means here — and what it does not</h2>
+      <div class="two-col">
+        <div class="panel">
+          <h3>It does mean</h3>
+          <ul>
+            <li>No custodian: funds stay in wallets and pools.</li>
+            <li>No central matching engine: pools are chain outputs and swaps are transactions.</li>
+            <li>No single service: each token has its own instance, and validators can be independent.</li>
+            <li>Public verification: lookups and read APIs let anyone check state without an account.</li>
+            <li>Permissionless hosting: anyone can run a host and serve a token.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>It does not mean</h3>
+          <ul>
+            <li>It is not a separate consensus network. BSV is the settlement layer and final arbiter.</li>
+            <li>A hosted exchange is one machine with one operator key. Decentralization comes from being able to run your own, not from every host being trustless.</li>
+            <li>Governance is a claim, not a vote: the first wallet to claim a hosted exchange becomes admin while the host keeps root.</li>
+            <li>You still rely on validators to be live and to sign correctly. You do not rely on them to hold your funds.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="foot">
+      <span>Live on BSV testnet while Open Exchange and its host are under active development. This is a design explainer, not investment advice.</span>
+      <nav class="foot-links" aria-label="Sources">
+        <a href="https://github.com/shruggr/open-exchange">Source</a>
+        <a href="https://github.com/shruggr/skein-amm">AMM docs</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
