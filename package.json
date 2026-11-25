@@ -20,12 +20,12 @@
     "accept": "node --experimental-strip-types --no-warnings scripts/accept/ox-accept.ts"
   },
   "dependencies": {
-    "@dcasegr/skein": "0.2.9",
-    "@dcasegr/amm-engine": "0.43.0"
+    "@dcasegr/amm-engine": "file:../../../../../tmp/claude-1000/-home-shruggr-Work-agent-env/238cb57f-562c-4329-8e5e-c9ab37304cb4/scratchpad/pkg-pre/dcasegr-amm-engine-0.44.0.tgz",
+    "@dcasegr/skein": "file:../../../../../tmp/claude-1000/-home-shruggr-Work-agent-env/238cb57f-562c-4329-8e5e-c9ab37304cb4/scratchpad/pkg/dcasegr-skein-0.3.0.tgz"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
-    "@types/node": "^26.6.2"
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=24"
